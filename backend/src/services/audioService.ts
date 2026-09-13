@@ -1,220 +1,157 @@
 import fs from 'fs/promises';
 import path from 'path';
-// @ts-ignore
-import lz4js from 'lz4js';
+import crypto from 'crypto';
 import { OpusDecoder } from 'opus-decoder';
 import WavEncoder from 'wav-encoder';
 
 export interface AudioDecodeOptions {
   sampleRate?: number;
   channels?: number;
-  frameSizeMs?: number;
   compress?: string | null;
 }
 
+type Endian = 'BE' | 'LE';
+
 export class AudioService {
-  /**
-   * Decompresses LZ4 buffer if compressed.
-   */
-  public decompressIfNeeded(buffer: Buffer, compress?: string | null): Buffer {
-    if (compress && compress.toLowerCase() === 'lz4') {
-      try {
-        const decompressed = lz4js.decompress(buffer);
-        return Buffer.from(decompressed);
-      } catch (err) {
-        console.warn('[AudioService] LZ4 decompress failed, using raw buffer:', err);
-        return buffer;
+  private splitLengthPrefixedFrames(buffer: Buffer, endian: Endian): Buffer[] | null {
+    const frames: Buffer[] = [];
+    let offset = 0;
+
+    while (offset + 2 <= buffer.length) {
+      const frameLength = endian === 'BE'
+        ? buffer.readUInt16BE(offset)
+        : buffer.readUInt16LE(offset);
+      offset += 2;
+
+      if (frameLength <= 0 || frameLength >= 1500 || offset + frameLength > buffer.length) {
+        return null;
       }
+
+      frames.push(buffer.subarray(offset, offset + frameLength));
+      offset += frameLength;
     }
-    return buffer;
+
+    return offset === buffer.length && frames.length > 1 ? frames : null;
   }
 
-  /**
-   * Decodes OPUS buffer (or concatenated slice buffers) into WAV format.
-   */
+  private async decodePackets(
+    packets: Buffer[],
+    sampleRate: number,
+    channels: number
+  ): Promise<Float32Array[]> {
+    const decoder = new OpusDecoder({
+      sampleRate: sampleRate as any,
+      channels: channels as any
+    });
+
+    try {
+      await decoder.ready;
+      const channelChunks: Float32Array[][] = Array.from({ length: channels }, () => []);
+
+      for (const packet of packets) {
+        const decoded = decoder.decodeFrame(new Uint8Array(packet));
+        if (!decoded.channelData || decoded.channelData.length < channels) {
+          throw new Error('Opus packet did not produce all expected channels');
+        }
+
+        for (let channel = 0; channel < channels; channel += 1) {
+          const samples = decoded.channelData[channel];
+          if (!samples || samples.length === 0) {
+            throw new Error('Opus packet produced no audio samples');
+          }
+          channelChunks[channel].push(samples);
+        }
+      }
+
+      return channelChunks.map((chunks) => {
+        const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+        if (totalLength === 0) {
+          throw new Error('Opus decoding produced no audio samples');
+        }
+        const merged = new Float32Array(totalLength);
+        let position = 0;
+        for (const chunk of chunks) {
+          merged.set(chunk, position);
+          position += chunk.length;
+        }
+        return merged;
+      });
+    } finally {
+      decoder.free();
+    }
+  }
+
+  /** Decode uncompressed input only. LZ4 remains isolated until its framing is confirmed. */
   public async decodeOpusToWav(
     opusBuffer: Buffer,
     options: AudioDecodeOptions = {}
   ): Promise<Buffer> {
+    if (options.compress) {
+      throw new Error('Compressed recording decoding is disabled pending supplier LZ4 framing confirmation');
+    }
+    if (opusBuffer.length === 0) {
+      throw new Error('Cannot decode an empty Opus buffer');
+    }
+
     const sampleRate = options.sampleRate || 16000;
     const channels = options.channels || 2;
+    const candidates: Buffer[][] = [];
+    const bigEndianFrames = this.splitLengthPrefixedFrames(opusBuffer, 'BE');
+    const littleEndianFrames = this.splitLengthPrefixedFrames(opusBuffer, 'LE');
+    if (bigEndianFrames) candidates.push(bigEndianFrames);
+    if (littleEndianFrames) candidates.push(littleEndianFrames);
+    candidates.push([opusBuffer]);
 
-    const decompressedBuffer = this.decompressIfNeeded(opusBuffer, options.compress);
-
-    const decoder = new OpusDecoder({
-      sampleRate: (sampleRate as any) || 16000,
-      channels: (channels as any) || 2
-    });
-
-    await decoder.ready;
-
-    const leftChannelChunks: Float32Array[] = [];
-    const rightChannelChunks: Float32Array[] = [];
-
-    // Parse frames: ZY04 non-standard OPUS commonly prefixes each frame with a 2-byte or 4-byte length,
-    // or standard raw packets. We try parsing length-prefixed frames first.
-    let parsedAnyFrames = false;
-    let offset = 0;
-    const len = decompressedBuffer.length;
-
-    // Check 2-byte BE length prefix pattern
-    if (len > 4) {
-      let testOffset = 0;
-      let validCount = 0;
-      while (testOffset + 2 < len) {
-        const frameLen = decompressedBuffer.readUInt16BE(testOffset);
-        if (frameLen > 0 && frameLen < 1500 && testOffset + 2 + frameLen <= len) {
-          testOffset += 2 + frameLen;
-          validCount++;
-        } else {
-          break;
-        }
-      }
-
-      if (validCount > 1) {
-        // High confidence in 2-byte BE length prefix
-        offset = 0;
-        while (offset + 2 < len) {
-          const frameLen = decompressedBuffer.readUInt16BE(offset);
-          offset += 2;
-          if (frameLen <= 0 || offset + frameLen > len) break;
-          const frame = decompressedBuffer.subarray(offset, offset + frameLen);
-          offset += frameLen;
-
-          try {
-            const decoded = decoder.decodeFrame(new Uint8Array(frame));
-            if (decoded.channelData && decoded.channelData.length > 0) {
-              leftChannelChunks.push(decoded.channelData[0]);
-              if (channels > 1 && decoded.channelData[1]) {
-                rightChannelChunks.push(decoded.channelData[1]);
-              }
-              parsedAnyFrames = true;
-            }
-          } catch (e) {
-            // Ignore single corrupt frame and continue
-          }
-        }
-      }
-    }
-
-    // If not decoded yet, try 2-byte LE length prefix
-    if (!parsedAnyFrames && len > 4) {
-      let testOffset = 0;
-      let validCount = 0;
-      while (testOffset + 2 < len) {
-        const frameLen = decompressedBuffer.readUInt16LE(testOffset);
-        if (frameLen > 0 && frameLen < 1500 && testOffset + 2 + frameLen <= len) {
-          testOffset += 2 + frameLen;
-          validCount++;
-        } else {
-          break;
-        }
-      }
-
-      if (validCount > 1) {
-        offset = 0;
-        while (offset + 2 < len) {
-          const frameLen = decompressedBuffer.readUInt16LE(offset);
-          offset += 2;
-          if (frameLen <= 0 || offset + frameLen > len) break;
-          const frame = decompressedBuffer.subarray(offset, offset + frameLen);
-          offset += frameLen;
-
-          try {
-            const decoded = decoder.decodeFrame(new Uint8Array(frame));
-            if (decoded.channelData && decoded.channelData.length > 0) {
-              leftChannelChunks.push(decoded.channelData[0]);
-              if (channels > 1 && decoded.channelData[1]) {
-                rightChannelChunks.push(decoded.channelData[1]);
-              }
-              parsedAnyFrames = true;
-            }
-          } catch (e) {
-            // Continue
-          }
-        }
-      }
-    }
-
-    // If still not decoded, try whole buffer or raw frame decode
-    if (!parsedAnyFrames) {
+    let lastError: unknown;
+    for (const packets of candidates) {
       try {
-        const decoded = decoder.decodeFrame(new Uint8Array(decompressedBuffer));
-        if (decoded.channelData && decoded.channelData.length > 0) {
-          leftChannelChunks.push(decoded.channelData[0]);
-          if (channels > 1 && decoded.channelData[1]) {
-            rightChannelChunks.push(decoded.channelData[1]);
-          }
-          parsedAnyFrames = true;
+        const channelData = await this.decodePackets(packets, sampleRate, channels);
+        const wavArrayBuffer = await WavEncoder.encode({ sampleRate, channelData });
+        const wavBuffer = Buffer.from(wavArrayBuffer);
+        if (wavBuffer.length <= 44) {
+          throw new Error('WAV output contains no audio payload');
         }
-      } catch {
-        // Handled below
+        return wavBuffer;
+      } catch (error) {
+        lastError = error;
       }
     }
 
-    decoder.free();
-
-    // If frames were decoded, encode to WAV
-    if (parsedAnyFrames && leftChannelChunks.length > 0) {
-      const totalLeftLen = leftChannelChunks.reduce((acc, curr) => acc + curr.length, 0);
-      const mergedLeft = new Float32Array(totalLeftLen);
-      let pos = 0;
-      for (const chunk of leftChannelChunks) {
-        mergedLeft.set(chunk, pos);
-        pos += chunk.length;
-      }
-
-      const channelData: Float32Array[] = [mergedLeft];
-      if (channels > 1) {
-        const totalRightLen = rightChannelChunks.reduce((acc, curr) => acc + curr.length, 0);
-        const mergedRight = new Float32Array(totalRightLen);
-        let rPos = 0;
-        for (const chunk of rightChannelChunks) {
-          mergedRight.set(chunk, rPos);
-          rPos += chunk.length;
-        }
-        channelData.push(mergedRight);
-      }
-
-      const wavArrayBuffer = await WavEncoder.encode({
-        sampleRate,
-        channelData
-      });
-
-      return Buffer.from(wavArrayBuffer);
-    }
-
-    // Fallback if raw PCM or unparsed: generate valid silent/raw WAV representation so playback never crashes
-    console.warn('[AudioService] Could not decode frames via OpusDecoder, generating fallback WAV');
-    const fallbackSamples = new Float32Array(Math.max(16000, decompressedBuffer.length / 2));
-    const wavArrayBuffer = await WavEncoder.encode({
-      sampleRate,
-      channelData: channels === 1 ? [fallbackSamples] : [fallbackSamples, fallbackSamples]
-    });
-    return Buffer.from(wavArrayBuffer);
+    const reason = lastError instanceof Error ? lastError.message : 'unknown decoder failure';
+    throw new Error(`Opus decoding failed: ${reason}`);
   }
 
-  /**
-   * Process and save WAV file for a given recording session.
-   */
+  /** Write a complete temporary WAV and atomically publish it only after decoding succeeds. */
   public async processAndSaveWav(
     slicePaths: string[],
     destinationWavPath: string,
     options: AudioDecodeOptions
   ): Promise<string> {
-    const buffers: Buffer[] = [];
-    for (const p of slicePaths) {
-      const data = await fs.readFile(p);
-      buffers.push(data);
+    if (options.compress) {
+      throw new Error('LZ4 recording cannot be decoded before supplier framing confirmation');
     }
 
-    const mergedBuffer = Buffer.concat(buffers);
-    const wavBuffer = await this.decodeOpusToWav(mergedBuffer, options);
+    const buffers = await Promise.all(slicePaths.map((slicePath) => fs.readFile(slicePath)));
+    const wavBuffer = await this.decodeOpusToWav(Buffer.concat(buffers), options);
+    const temporaryPath = `${destinationWavPath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
 
     await fs.mkdir(path.dirname(destinationWavPath), { recursive: true });
-    await fs.writeFile(destinationWavPath, wavBuffer);
+    try {
+      try {
+        await fs.access(destinationWavPath);
+        throw new Error('A WAV output already exists for this session');
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT') throw error;
+      }
 
-    return destinationWavPath;
+      await fs.writeFile(temporaryPath, wavBuffer, { flag: 'wx' });
+      await fs.rename(temporaryPath, destinationWavPath);
+      return destinationWavPath;
+    } catch (error) {
+      await fs.unlink(temporaryPath).catch(() => undefined);
+      throw error;
+    }
   }
 }
 
