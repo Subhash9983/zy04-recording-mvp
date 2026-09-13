@@ -3,18 +3,19 @@
 ## Repository
 
 - Branch: `feature/zy04-device-management-admin-dashboard`
-- Baseline commit before this state: `874ed17`
-- Phase 1 commit: the commit containing this file
+- Phase 1 commit: `fa2e00d`
+- Phase 2 commit: the commit containing the Badge Time Sync changes
 
 ## Implemented endpoints
 
 - `POST /sca/recordupload`
+- `GET /sca/device/cloud_time`
 - `GET /api/recordings`
 - `GET /api/recordings/:id`
 - `GET /api/recordings/:id/audio`
 - `GET /health`
 
-No Device Management, OTA, log, authentication, or Admin Dashboard endpoints are implemented yet.
+No configuration, OTA, log, authentication, or Admin Dashboard endpoints are implemented yet.
 
 ## Important files
 
@@ -24,6 +25,8 @@ No Device Management, OTA, log, authentication, or Admin Dashboard endpoints are
 - Strict decode/output publication: `backend/src/services/audioService.ts`
 - Decimal uint32 parsing: `backend/src/utils/serial.ts`
 - Safe recording reads/audio streaming: `backend/src/routes/recordings.ts`
+- Badge Time Sync: `backend/src/routes/deviceTime.ts`
+- Route registration: `backend/src/app.ts`
 
 ## Model and indexes
 
@@ -47,6 +50,13 @@ No Device Management, OTA, log, authentication, or Admin Dashboard endpoints are
 - Decode failures cannot create silent WAVs or become `READY`.
 - Public APIs do not return filesystem paths, and only an existing safe WAV can be streamed.
 - Backend and frontend production builds pass.
+- Badge Time Sync returns HTTP 200 with `code: 0`, a current 13-digit millisecond timestamp, JSON content type, and explicit content length without querying MongoDB.
+
+## Phase 2 changed files
+
+- `backend/src/routes/deviceTime.ts`
+- `backend/src/app.ts`
+- `ZY04-IMPLEMENTATION-STATE.md`
 
 ## Known blockers and risks
 
@@ -54,7 +64,8 @@ No Device Management, OTA, log, authentication, or Admin Dashboard endpoints are
 - Supplier `opus-decoder-core` compatibility remains `UNVERIFIED`; the installed decoder is `opus-decoder`.
 - The processing guard is reliable for the current single-process service, but there is no multi-instance lock or durable restart queue.
 - Render local storage is ephemeral. Original slices and WAV files can disappear after restart/redeploy while MongoDB metadata remains.
+- Cloudflare R2 integration remains pending.
 
 ## Exact next phase
 
-Phase 2: permanent recording storage integration using Cloudflare R2, without starting Device Management APIs until that phase is separately approved.
+Phase 3: implement Badge Configuration Fetch (`POST /sca/device/config`) with the minimum `Device` and `DeviceConfig` models and no unrelated APIs.

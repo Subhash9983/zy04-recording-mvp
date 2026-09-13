@@ -6,6 +6,7 @@ import path from 'path';
 import { config } from './config.js';
 import { recordUploadRoutes } from './routes/recordUpload.js';
 import { recordingRoutes } from './routes/recordings.js';
+import { deviceTimeRoutes } from './routes/deviceTime.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -38,6 +39,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   // Register routes
+  await app.register(deviceTimeRoutes);
   await app.register(recordUploadRoutes);
   await app.register(recordingRoutes);
 
