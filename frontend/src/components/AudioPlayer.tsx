@@ -9,8 +9,10 @@ interface AudioPlayerProps {
 
 export const AudioPlayer: React.FC<AudioPlayerProps> = ({ recording, onClose }) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
 
   useEffect(() => {
+    setLoadError(null);
     if (recording && audioRef.current) {
       audioRef.current.load();
       audioRef.current.play().catch(() => {
@@ -32,10 +34,23 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({ recording, onClose }) 
         <span className="player-sub">
           Record ID: {recording.record_id}
         </span>
+        {loadError && (
+          <span style={{ color: '#f87171', fontSize: '0.75rem', marginTop: '0.2rem' }}>
+            ⚠️ {loadError}
+          </span>
+        )}
       </div>
 
       <div className="player-controls">
-        <audio ref={audioRef} controls autoPlay src={audioSrc}>
+        <audio
+          ref={audioRef}
+          controls
+          autoPlay
+          src={audioSrc}
+          onError={() => {
+            setLoadError('Audio file not found on disk (Render temporary storage wiped on restart/redeploy).');
+          }}
+        >
           Your browser does not support the audio element.
         </audio>
       </div>

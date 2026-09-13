@@ -1,5 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import fs from 'fs';
+import path from 'path';
+import { config } from '../config.js';
 import { recordingService } from '../services/recordingService.js';
 
 export const recordingRoutes: FastifyPluginAsync = async (fastify) => {
@@ -49,7 +51,22 @@ export const recordingRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({ error: 'Recording not found' });
       }
 
-      const filePath = recording.wav_file_path || recording.original_file_path;
+      let filePath = recording.wav_file_path || recording.original_file_path;
+      if (filePath && !fs.existsSync(filePath)) {
+        // Fallback: resolve relative to config.uploadDir
+        const sn = recording.device_sn.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const session = recording.session_id.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const altWav = path.join(config.uploadDir, sn, session, 'recording.wav');
+        if (fs.existsSync(altWav)) {
+          filePath = altWav;
+        } else {
+          const altOpus = path.join(config.uploadDir, sn, session, path.basename(filePath));
+          if (fs.existsSync(altOpus)) {
+            filePath = altOpus;
+          }
+        }
+      }
+
       if (!filePath || !fs.existsSync(filePath)) {
         return reply.status(404).send({ error: 'Audio file not found on disk' });
       }
