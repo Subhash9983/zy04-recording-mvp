@@ -9,6 +9,7 @@ import { recordingRoutes } from './routes/recordings.js';
 import { deviceTimeRoutes } from './routes/deviceTime.js';
 import { deviceConfigRoutes } from './routes/deviceConfig.js';
 import { deviceReportRoutes } from './routes/deviceReport.js';
+import { debugLogRoutes } from './routes/debugLog.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -32,7 +33,11 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Static files for uploads directory if needed
   await app.register(fastifyStatic, {
     root: path.resolve(config.uploadDir),
-    prefix: '/uploads/'
+    prefix: '/uploads/',
+    allowedPath: (pathName) => {
+      const normalized = pathName.replace(/\\/g, '/').toLowerCase();
+      return normalized !== '/debug-logs' && !normalized.startsWith('/debug-logs/');
+    }
   });
 
   // Health check
@@ -44,6 +49,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(deviceTimeRoutes);
   await app.register(deviceConfigRoutes);
   await app.register(deviceReportRoutes);
+  await app.register(debugLogRoutes);
   await app.register(recordUploadRoutes);
   await app.register(recordingRoutes);
 

@@ -8,7 +8,8 @@
 - R2 storage phase commit: `dc813ba`
 - Phase 3 commit: `22aa961`
 - Phase 4 commit: `be4d87a`
-- Phase 5: the commit containing report/status ingestion and device health
+- Phase 5 commit: `780cebe`
+- Phase 6: the commit containing debug-log upload ingestion
 
 ## Implemented endpoints
 
@@ -17,12 +18,13 @@
 - `POST /sca/device/config`
 - `POST /sca/device/config_status`
 - `POST /sca/device/reportinfo`
+- `POST /sca/device/debug_log`
 - `GET /api/recordings`
 - `GET /api/recordings/:id`
 - `GET /api/recordings/:id/audio`
 - `GET /health`
 
-No configuration creation, debug-log upload, OTA, authentication, or Admin Dashboard endpoints are implemented yet.
+No configuration creation, OTA, authentication, or Admin Dashboard endpoints are implemented yet.
 
 ## Important files
 
@@ -40,6 +42,9 @@ No configuration creation, debug-log upload, OTA, authentication, or Admin Dashb
 - Report parsing, health updates, and alert transitions: `backend/src/services/deviceReportService.ts`
 - Raw/parsed device logs: `backend/src/models/DeviceLog.ts`
 - Preserved device alert history: `backend/src/models/DeviceAlert.ts`
+- Debug-log multipart ingestion: `backend/src/routes/debugLog.ts`
+- Debug-log storage/metadata coordination: `backend/src/services/debugLogService.ts`
+- Debug-log metadata: `backend/src/models/DebugLog.ts`
 - Recording storage abstraction and R2 configuration: `backend/src/services/storageService.ts`
 - Route registration: `backend/src/app.ts`
 
@@ -53,6 +58,7 @@ No configuration creation, debug-log upload, OTA, authentication, or Admin Dashb
 - Device configuration queue index: `{ device_sn: 1, device_model: 1, status: 1, created_at: 1 }`; session identity is unique per device.
 - `DeviceLog` stores bounded raw JSON text plus normalized fields and has a device timeline index.
 - `DeviceAlert` keeps `ACTIVE`/`RESOLVED` incidents; a partial unique index allows one active alert per device/type while retaining resolved history.
+- `DebugLog` stores `sn`, timestamp, safe filename, size, R2/local reference, storage mode, upload time, and optional deletion time; `{ sn, ts, file_name }` is unique.
 - Existing unique `record_id` index remains.
 - New unique logical-slice index: `{ device_sn: 1, session_id: 1, serial: 1 }`.
 - The new index is partial on `slice_number` so legacy documents remain readable and existing rows require no destructive migration.
@@ -88,6 +94,9 @@ No configuration creation, debug-log upload, OTA, authentication, or Admin Dashb
 - Status logs update device power, operating state, storage, Wi-Fi, local file count, debug/report counts, hub SN, firmware versions, and last-seen time.
 - Report logs parse upload outcomes; all accepted logs retain bounded raw JSON text without storing supplier keys as MongoDB paths.
 - Low-battery (`power <= 20`), storage (`free <= 10%`), and upload-failure alerts activate without duplicating active incidents and auto-resolve on observed recovery while preserving history.
+- Debug-log upload requires `sn`, a 13-digit `ts`, and exactly one non-empty `log_file`; deprecated `create_time` is accepted and ignored.
+- Debug files use `debug-logs/{sn}/{ts}-{safe_file_name}` through the shared R2/local storage policy, and valid uploads upsert device last-seen.
+- Local debug-log objects are explicitly excluded from the existing public static-upload route.
 
 ## Phase 2 changed files
 
@@ -139,15 +148,26 @@ Focused in-memory checks pass for success, failure, missing session, duplicate s
 
 Backend and frontend production builds pass. In-memory checks pass for status/report acceptance, parsed health, bounded raw storage, upload-failure detection, threshold activation and recovery for battery/storage, upload recovery, route registration, and invalid input. No MongoDB connection was made.
 
+## Phase 6 changed files
+
+- `backend/src/services/storageService.ts`
+- `backend/src/models/DebugLog.ts`
+- `backend/src/services/debugLogService.ts`
+- `backend/src/routes/debugLog.ts`
+- `backend/src/app.ts`
+- `ZY04-IMPLEMENTATION-STATE.md`
+
+Backend and frontend production builds pass. Multipart checks pass for valid upload, missing `sn`/`ts`/file, duplicate files, ignored deprecated `create_time`, device last-seen, metadata, exact key format, and blocked static access. Transient local files/directories were removed; no MongoDB or R2 connection was made.
+
 ## Known blockers and risks
 
 - LZ4 framing is unconfirmed. Complete compressed sessions stop at `PENDING_LZ4_CONFIRMATION`; originals are preserved and no decompression/decoding is attempted.
 - Supplier `opus-decoder-core` compatibility remains `UNVERIFIED`; the installed decoder is `opus-decoder`.
 - The processing guard is reliable for the current single-process service, but there is no multi-instance lock or durable restart queue.
 - Render local storage is ephemeral; production must provide R2 configuration. Local fallback remains development/legacy-only.
-- R2 support for debug logs and OTA firmware is pending and was intentionally not implemented in this phase.
+- R2 support for OTA firmware is pending and was intentionally not implemented in this phase.
 - Configuration creation UI remains pending. Delivered configurations are redelivered until a successful acknowledgement.
 
 ## Exact next phase
 
-Phase 6 scope awaits explicit instruction; do not infer frontend UI, debug-log upload, OTA, authentication, or dashboard work.
+Phase 7 scope awaits explicit instruction; do not infer frontend UI, OTA, authentication, or dashboard work.

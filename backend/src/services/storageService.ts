@@ -98,6 +98,15 @@ export function recordingWavObjectKey(deviceSn: string, sessionId: string, recor
   return `recordings/${safeKeyComponent(deviceSn)}/${safeKeyComponent(sessionId)}/wav/${safeKeyComponent(recordId)}.wav`;
 }
 
+export function safeStorageFileName(value: string): string {
+  const leaf = value.replace(/\\/g, '/').split('/').pop()?.trim() || 'debug.log';
+  return safeKeyComponent(leaf, 180);
+}
+
+export function debugLogObjectKey(deviceSn: string, timestamp: string, fileName: string): string {
+  return `debug-logs/${safeKeyComponent(deviceSn)}/${timestamp}-${safeStorageFileName(fileName)}`;
+}
+
 function isNotFound(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
   const candidate = error as { name?: string; $metadata?: { httpStatusCode?: number } };
