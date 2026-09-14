@@ -2,6 +2,7 @@ import Fastify, { FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
+import cookie from '@fastify/cookie';
 import path from 'path';
 import { config } from './config.js';
 import { recordUploadRoutes } from './routes/recordUpload.js';
@@ -11,6 +12,7 @@ import { deviceConfigRoutes } from './routes/deviceConfig.js';
 import { deviceReportRoutes } from './routes/deviceReport.js';
 import { debugLogRoutes } from './routes/debugLog.js';
 import { otaRoutes } from './routes/ota.js';
+import { adminAuthRoutes } from './routes/adminAuth.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -20,7 +22,8 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // CORS setup
   await app.register(cors, {
-    origin: true,
+    origin: config.frontendUrl,
+    credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
   });
 
@@ -30,6 +33,8 @@ export async function buildApp(): Promise<FastifyInstance> {
       fileSize: 50 * 1024 * 1024 // 50MB per file
     }
   });
+
+  await app.register(cookie);
 
   // Static files for uploads directory if needed
   await app.register(fastifyStatic, {
@@ -52,6 +57,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(deviceReportRoutes);
   await app.register(debugLogRoutes);
   await app.register(otaRoutes);
+  await app.register(adminAuthRoutes);
   await app.register(recordUploadRoutes);
   await app.register(recordingRoutes);
 

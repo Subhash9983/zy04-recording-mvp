@@ -10,7 +10,8 @@
 - Phase 4 commit: `be4d87a`
 - Phase 5 commit: `780cebe`
 - Phase 6 commit: `0da3c08`
-- Phase 7: the commit containing OTA firmware fetch
+- Phase 7 commit: `53175a1`
+- Phase 8: the commit containing admin authentication and audit foundation
 
 ## Implemented endpoints
 
@@ -21,12 +22,15 @@
 - `POST /sca/device/reportinfo`
 - `POST /sca/device/debug_log`
 - `POST /ota/v1/fetch_new_firmware`
+- `POST /api/admin/auth/login`
+- `POST /api/admin/auth/logout`
+- `GET /api/admin/auth/me`
 - `GET /api/recordings`
 - `GET /api/recordings/:id`
 - `GET /api/recordings/:id/audio`
 - `GET /health`
 
-No configuration creation, firmware file upload, authentication, or Admin Dashboard endpoints are implemented yet.
+No configuration creation, firmware file upload, or Admin Dashboard data-management endpoints are implemented yet.
 
 ## Important files
 
@@ -50,6 +54,12 @@ No configuration creation, firmware file upload, authentication, or Admin Dashbo
 - OTA firmware fetch: `backend/src/routes/ota.ts`
 - OTA validation, version comparison, and selection: `backend/src/services/otaService.ts`
 - URL-based firmware catalog: `backend/src/models/Firmware.ts`
+- Admin authentication routes: `backend/src/routes/adminAuth.ts`
+- Password/session authentication and reusable middleware: `backend/src/services/adminAuthService.ts`
+- Append-only audit helper: `backend/src/services/auditService.ts`
+- Single admin identity: `backend/src/models/Admin.ts`
+- Revocable admin sessions: `backend/src/models/AdminSession.ts`
+- Append-only audit history: `backend/src/models/AuditLog.ts`
 - Recording storage abstraction and R2 configuration: `backend/src/services/storageService.ts`
 - Route registration: `backend/src/app.ts`
 
@@ -65,6 +75,9 @@ No configuration creation, firmware file upload, authentication, or Admin Dashbo
 - `DeviceAlert` keeps `ACTIVE`/`RESOLVED` incidents; a partial unique index allows one active alert per device/type while retaining resolved history.
 - `DebugLog` stores `sn`, timestamp, safe filename, size, R2/local reference, storage mode, upload time, and optional deletion time; `{ sn, ts, file_name }` is unique.
 - `Firmware` stores model/type/version, HTTP(S) URL, MD5, force/default update type, enabled state, and timestamps; model/type/version is unique.
+- `Admin` enforces one `PRIMARY` administrator and stores only a salted scrypt password hash.
+- `AdminSession` stores only SHA-256 token hashes, expires after 24 hours via TTL, and supports revocation.
+- `AuditLog` records actor, action, target, sanitized metadata, request context, and creation time; application/model update and delete operations are rejected.
 - Existing unique `record_id` index remains.
 - New unique logical-slice index: `{ device_sn: 1, session_id: 1, serial: 1 }`.
 - The new index is partial on `slice_number` so legacy documents remain readable and existing rows require no destructive migration.
@@ -106,6 +119,11 @@ No configuration creation, firmware file upload, authentication, or Admin Dashbo
 - OTA fetch validates and echoes current firmware, ignores unknown types during lookup, and returns at most one eligible enabled URL package per supported requested type.
 - Forced packages may downgrade or replace equal versions; default packages must compare newer. Missing matches return an empty `latest_firmware` array.
 - Valid OTA requests upsert device identity and update model/last-seen without accessing firmware file storage.
+- Admin login uses the environment-provisioned single administrator, an HttpOnly/SameSite signed opaque cookie, and a revocable 24-hour server-side session.
+- Login success/failure and logout are audited; `requireAdmin` and `writeAuditLog` are exported for future admin APIs.
+- Missing, invalid, expired, or revoked sessions are rejected by admin middleware; logout revokes the session and clears the cookie.
+- Production startup rejects missing/incomplete `ADMIN_EMAIL`, `ADMIN_PASSWORD`, or `SESSION_SECRET`; values are never logged or committed.
+- Supplier `/sca/*` and OTA endpoints remain outside admin middleware.
 
 ## Phase 2 changed files
 
@@ -178,6 +196,22 @@ Backend and frontend production builds pass. Multipart checks pass for valid upl
 
 Backend and frontend production builds pass. In-memory checks pass for empty results, matching upgrades, disabled packages, unknown types, current-firmware echo, forced downgrade eligibility, dotted version comparison, device last-seen, and invalid input. No MongoDB connection was made.
 
+## Phase 8 changed files
+
+- `backend/src/models/Admin.ts`
+- `backend/src/models/AdminSession.ts`
+- `backend/src/models/AuditLog.ts`
+- `backend/src/services/adminAuthService.ts`
+- `backend/src/services/auditService.ts`
+- `backend/src/routes/adminAuth.ts`
+- `backend/src/app.ts`
+- `backend/.env.example`
+- `backend/package.json`
+- `backend/package-lock.json`
+- `ZY04-IMPLEMENTATION-STATE.md`
+
+Backend and frontend production builds pass. Cryptographic and in-memory HTTP checks pass for password hashing, login success/failure, 24-hour signed sessions, valid/invalid/missing `me`, logout revocation/cookie clearing, login/logout/future audit events, append-only guards, production configuration failure, and unprotected supplier endpoints. No MongoDB connection was made.
+
 ## Known blockers and risks
 
 - LZ4 framing is unconfirmed. Complete compressed sessions stop at `PENDING_LZ4_CONFIRMATION`; originals are preserved and no decompression/decoding is attempted.
@@ -189,4 +223,4 @@ Backend and frontend production builds pass. In-memory checks pass for empty res
 
 ## Exact next phase
 
-Phase 8: run isolated live API integration tests with non-production MongoDB/R2 credentials and representative supplier payloads before any deployment; do not infer frontend UI or authentication work.
+Phase 9 scope awaits explicit instruction. Future admin routes must use `requireAdmin` and `writeAuditLog`; do not infer frontend UI or deployment work.
