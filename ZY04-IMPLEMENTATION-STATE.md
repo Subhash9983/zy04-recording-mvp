@@ -7,7 +7,8 @@
 - Phase 2 commit: `cc52296`
 - R2 storage phase commit: `dc813ba`
 - Phase 3 commit: `22aa961`
-- Phase 4: the commit containing the configuration status acknowledgement
+- Phase 4 commit: `be4d87a`
+- Phase 5: the commit containing report/status ingestion and device health
 
 ## Implemented endpoints
 
@@ -15,12 +16,13 @@
 - `GET /sca/device/cloud_time`
 - `POST /sca/device/config`
 - `POST /sca/device/config_status`
+- `POST /sca/device/reportinfo`
 - `GET /api/recordings`
 - `GET /api/recordings/:id`
 - `GET /api/recordings/:id/audio`
 - `GET /health`
 
-No configuration creation, OTA, log, authentication, or Admin Dashboard endpoints are implemented yet.
+No configuration creation, debug-log upload, OTA, authentication, or Admin Dashboard endpoints are implemented yet.
 
 ## Important files
 
@@ -34,6 +36,10 @@ No configuration creation, OTA, log, authentication, or Admin Dashboard endpoint
 - Badge configuration fetch: `backend/src/routes/deviceConfig.ts`
 - Device identity/last-seen model: `backend/src/models/Device.ts`
 - Device configuration delivery model: `backend/src/models/DeviceConfig.ts`
+- Report/status ingestion: `backend/src/routes/deviceReport.ts`
+- Report parsing, health updates, and alert transitions: `backend/src/services/deviceReportService.ts`
+- Raw/parsed device logs: `backend/src/models/DeviceLog.ts`
+- Preserved device alert history: `backend/src/models/DeviceAlert.ts`
 - Recording storage abstraction and R2 configuration: `backend/src/services/storageService.ts`
 - Route registration: `backend/src/app.ts`
 
@@ -45,6 +51,8 @@ No configuration creation, OTA, log, authentication, or Admin Dashboard endpoint
 - `DeviceConfig` queues values by device/model with `PENDING`, `DELIVERED`, `SUCCESS`, or `FAILED` status, delivery attempts, and timestamps.
 - `DeviceConfig` acknowledgement metadata: bounded raw `acknowledgement_status`, `acknowledged_at`, and `completed_at`.
 - Device configuration queue index: `{ device_sn: 1, device_model: 1, status: 1, created_at: 1 }`; session identity is unique per device.
+- `DeviceLog` stores bounded raw JSON text plus normalized fields and has a device timeline index.
+- `DeviceAlert` keeps `ACTIVE`/`RESOLVED` incidents; a partial unique index allows one active alert per device/type while retaining resolved history.
 - Existing unique `record_id` index remains.
 - New unique logical-slice index: `{ device_sn: 1, session_id: 1, serial: 1 }`.
 - The new index is partial on `slice_number` so legacy documents remain readable and existing rows require no destructive migration.
@@ -76,6 +84,10 @@ No configuration creation, OTA, log, authentication, or Admin Dashboard endpoint
 - `success` transitions a matching configuration to `SUCCESS`; other bounded statuses transition an eligible configuration to `FAILED` while preserving the raw acknowledgement.
 - Duplicate acknowledgements are idempotent, repeated failures do not rewrite completion timestamps, and a stale failure cannot downgrade `SUCCESS`.
 - Missing acknowledgement sessions return non-zero `code: 1` without exposing internal details.
+- Report info validates required `common` identity/version fields and classifies payloads by the presence of `dev_info.status`.
+- Status logs update device power, operating state, storage, Wi-Fi, local file count, debug/report counts, hub SN, firmware versions, and last-seen time.
+- Report logs parse upload outcomes; all accepted logs retain bounded raw JSON text without storing supplier keys as MongoDB paths.
+- Low-battery (`power <= 20`), storage (`free <= 10%`), and upload-failure alerts activate without duplicating active incidents and auto-resolve on observed recovery while preserving history.
 
 ## Phase 2 changed files
 
@@ -115,6 +127,18 @@ Backend and frontend production builds pass. In-memory route checks pass for dev
 
 Focused in-memory checks pass for success, failure, missing session, duplicate success/failure, stale failure after success, numeric/string session matching, device last-seen updates, and invalid input. No MongoDB connection was made.
 
+## Phase 5 changed files
+
+- `backend/src/models/Device.ts`
+- `backend/src/models/DeviceLog.ts`
+- `backend/src/models/DeviceAlert.ts`
+- `backend/src/services/deviceReportService.ts`
+- `backend/src/routes/deviceReport.ts`
+- `backend/src/app.ts`
+- `ZY04-IMPLEMENTATION-STATE.md`
+
+Backend and frontend production builds pass. In-memory checks pass for status/report acceptance, parsed health, bounded raw storage, upload-failure detection, threshold activation and recovery for battery/storage, upload recovery, route registration, and invalid input. No MongoDB connection was made.
+
 ## Known blockers and risks
 
 - LZ4 framing is unconfirmed. Complete compressed sessions stop at `PENDING_LZ4_CONFIRMATION`; originals are preserved and no decompression/decoding is attempted.
@@ -126,4 +150,4 @@ Focused in-memory checks pass for success, failure, missing session, duplicate s
 
 ## Exact next phase
 
-Phase 5 scope awaits explicit instruction; do not infer configuration creation UI, OTA, logs, authentication, or dashboard work.
+Phase 6 scope awaits explicit instruction; do not infer frontend UI, debug-log upload, OTA, authentication, or dashboard work.
