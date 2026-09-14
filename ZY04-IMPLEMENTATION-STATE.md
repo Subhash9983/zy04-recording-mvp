@@ -9,7 +9,8 @@
 - Phase 3 commit: `22aa961`
 - Phase 4 commit: `be4d87a`
 - Phase 5 commit: `780cebe`
-- Phase 6: the commit containing debug-log upload ingestion
+- Phase 6 commit: `0da3c08`
+- Phase 7: the commit containing OTA firmware fetch
 
 ## Implemented endpoints
 
@@ -19,12 +20,13 @@
 - `POST /sca/device/config_status`
 - `POST /sca/device/reportinfo`
 - `POST /sca/device/debug_log`
+- `POST /ota/v1/fetch_new_firmware`
 - `GET /api/recordings`
 - `GET /api/recordings/:id`
 - `GET /api/recordings/:id/audio`
 - `GET /health`
 
-No configuration creation, OTA, authentication, or Admin Dashboard endpoints are implemented yet.
+No configuration creation, firmware file upload, authentication, or Admin Dashboard endpoints are implemented yet.
 
 ## Important files
 
@@ -45,6 +47,9 @@ No configuration creation, OTA, authentication, or Admin Dashboard endpoints are
 - Debug-log multipart ingestion: `backend/src/routes/debugLog.ts`
 - Debug-log storage/metadata coordination: `backend/src/services/debugLogService.ts`
 - Debug-log metadata: `backend/src/models/DebugLog.ts`
+- OTA firmware fetch: `backend/src/routes/ota.ts`
+- OTA validation, version comparison, and selection: `backend/src/services/otaService.ts`
+- URL-based firmware catalog: `backend/src/models/Firmware.ts`
 - Recording storage abstraction and R2 configuration: `backend/src/services/storageService.ts`
 - Route registration: `backend/src/app.ts`
 
@@ -59,6 +64,7 @@ No configuration creation, OTA, authentication, or Admin Dashboard endpoints are
 - `DeviceLog` stores bounded raw JSON text plus normalized fields and has a device timeline index.
 - `DeviceAlert` keeps `ACTIVE`/`RESOLVED` incidents; a partial unique index allows one active alert per device/type while retaining resolved history.
 - `DebugLog` stores `sn`, timestamp, safe filename, size, R2/local reference, storage mode, upload time, and optional deletion time; `{ sn, ts, file_name }` is unique.
+- `Firmware` stores model/type/version, HTTP(S) URL, MD5, force/default update type, enabled state, and timestamps; model/type/version is unique.
 - Existing unique `record_id` index remains.
 - New unique logical-slice index: `{ device_sn: 1, session_id: 1, serial: 1 }`.
 - The new index is partial on `slice_number` so legacy documents remain readable and existing rows require no destructive migration.
@@ -97,6 +103,9 @@ No configuration creation, OTA, authentication, or Admin Dashboard endpoints are
 - Debug-log upload requires `sn`, a 13-digit `ts`, and exactly one non-empty `log_file`; deprecated `create_time` is accepted and ignored.
 - Debug files use `debug-logs/{sn}/{ts}-{safe_file_name}` through the shared R2/local storage policy, and valid uploads upsert device last-seen.
 - Local debug-log objects are explicitly excluded from the existing public static-upload route.
+- OTA fetch validates and echoes current firmware, ignores unknown types during lookup, and returns at most one eligible enabled URL package per supported requested type.
+- Forced packages may downgrade or replace equal versions; default packages must compare newer. Missing matches return an empty `latest_firmware` array.
+- Valid OTA requests upsert device identity and update model/last-seen without accessing firmware file storage.
 
 ## Phase 2 changed files
 
@@ -159,15 +168,25 @@ Backend and frontend production builds pass. In-memory checks pass for status/re
 
 Backend and frontend production builds pass. Multipart checks pass for valid upload, missing `sn`/`ts`/file, duplicate files, ignored deprecated `create_time`, device last-seen, metadata, exact key format, and blocked static access. Transient local files/directories were removed; no MongoDB or R2 connection was made.
 
+## Phase 7 changed files
+
+- `backend/src/models/Firmware.ts`
+- `backend/src/services/otaService.ts`
+- `backend/src/routes/ota.ts`
+- `backend/src/app.ts`
+- `ZY04-IMPLEMENTATION-STATE.md`
+
+Backend and frontend production builds pass. In-memory checks pass for empty results, matching upgrades, disabled packages, unknown types, current-firmware echo, forced downgrade eligibility, dotted version comparison, device last-seen, and invalid input. No MongoDB connection was made.
+
 ## Known blockers and risks
 
 - LZ4 framing is unconfirmed. Complete compressed sessions stop at `PENDING_LZ4_CONFIRMATION`; originals are preserved and no decompression/decoding is attempted.
 - Supplier `opus-decoder-core` compatibility remains `UNVERIFIED`; the installed decoder is `opus-decoder`.
 - The processing guard is reliable for the current single-process service, but there is no multi-instance lock or durable restart queue.
 - Render local storage is ephemeral; production must provide R2 configuration. Local fallback remains development/legacy-only.
-- R2 support for OTA firmware is pending and was intentionally not implemented in this phase.
+- Firmware file upload/storage is pending; Phase 7 intentionally supports URL catalog entries only.
 - Configuration creation UI remains pending. Delivered configurations are redelivered until a successful acknowledgement.
 
 ## Exact next phase
 
-Phase 7 scope awaits explicit instruction; do not infer frontend UI, OTA, authentication, or dashboard work.
+Phase 8: run isolated live API integration tests with non-production MongoDB/R2 credentials and representative supplier payloads before any deployment; do not infer frontend UI or authentication work.

@@ -10,6 +10,7 @@ import { deviceTimeRoutes } from './routes/deviceTime.js';
 import { deviceConfigRoutes } from './routes/deviceConfig.js';
 import { deviceReportRoutes } from './routes/deviceReport.js';
 import { debugLogRoutes } from './routes/debugLog.js';
+import { otaRoutes } from './routes/ota.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -50,6 +51,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(deviceConfigRoutes);
   await app.register(deviceReportRoutes);
   await app.register(debugLogRoutes);
+  await app.register(otaRoutes);
   await app.register(recordUploadRoutes);
   await app.register(recordingRoutes);
 
