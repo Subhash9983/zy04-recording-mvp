@@ -1,6 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { recordingService, SaveUploadPayload } from '../services/recordingService.js';
 import { parseSerial, SerialValidationError } from '../utils/serial.js';
+import { setActivityRequestBody } from '../services/apiActivityService.js';
 
 const REQUIRED_FIELDS = [
   'sn',
@@ -117,6 +118,7 @@ function validateFields(fields: Record<string, string>, fileBuffer: Buffer): Sav
 
 export const recordUploadRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/sca/recordupload', async (request, reply) => {
+    const activityBody: Record<string, unknown> = {};
     try {
       const parts = request.parts({ limits: { files: 2, fields: 32, parts: 34 } });
       const fields: Record<string, string> = {};
@@ -140,6 +142,12 @@ export const recordUploadRoutes: FastifyPluginAsync = async (fastify) => {
             throw new UploadRequestError('record_file exceeds the upload-size limit', 413);
           }
           fileBuffer = Buffer.concat(chunks);
+          activityBody.record_file = {
+            file_name: part.filename || null,
+            mime_type: part.mimetype,
+            size: fileBuffer.length,
+            content: '[binary omitted]'
+          };
           continue;
         }
 
@@ -148,7 +156,10 @@ export const recordUploadRoutes: FastifyPluginAsync = async (fastify) => {
         }
         seenTextFields.add(part.fieldname);
         fields[part.fieldname] = String(part.value);
+        activityBody[part.fieldname] = fields[part.fieldname];
       }
+
+      setActivityRequestBody(request, activityBody);
 
       if (!fileBuffer) throw new UploadRequestError('Exactly one record_file is required');
       const payload = validateFields(fields, fileBuffer);
@@ -156,6 +167,7 @@ export const recordUploadRoutes: FastifyPluginAsync = async (fastify) => {
 
       return reply.status(200).send({ code: 0, data: { record_id } });
     } catch (error) {
+      setActivityRequestBody(request, activityBody);
       if (error instanceof UploadRequestError) {
         return reply.status(error.statusCode).send({ code: error.statusCode, msg: error.message });
       }

@@ -13,6 +13,8 @@ import { deviceReportRoutes } from './routes/deviceReport.js';
 import { debugLogRoutes } from './routes/debugLog.js';
 import { otaRoutes } from './routes/ota.js';
 import { adminAuthRoutes } from './routes/adminAuth.js';
+import { adminDashboardRoutes } from './routes/adminDashboard.js';
+import { installApiActivityTracking } from './services/apiActivityService.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -51,6 +53,8 @@ export async function buildApp(): Promise<FastifyInstance> {
     return { status: 'ok', timestamp: new Date().toISOString() };
   });
 
+  installApiActivityTracking(app);
+
   // Register routes
   await app.register(deviceTimeRoutes);
   await app.register(deviceConfigRoutes);
@@ -58,6 +62,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(debugLogRoutes);
   await app.register(otaRoutes);
   await app.register(adminAuthRoutes);
+  await app.register(adminDashboardRoutes);
   await app.register(recordUploadRoutes);
   await app.register(recordingRoutes);
 

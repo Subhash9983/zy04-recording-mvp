@@ -1,6 +1,7 @@
 import { FastifyPluginAsync } from 'fastify';
 import { debugLogService } from '../services/debugLogService.js';
 import { safeStorageFileName } from '../services/storageService.js';
+import { setActivityRequestBody } from '../services/apiActivityService.js';
 
 const ALLOWED_TEXT_FIELDS = new Set(['sn', 'ts', 'create_time']);
 
@@ -23,6 +24,7 @@ function requiredText(fields: Record<string, string>, name: string, maximum: num
 
 export const debugLogRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/sca/device/debug_log', async (request, reply) => {
+    const activityBody: Record<string, unknown> = {};
     try {
       const parts = request.parts({ limits: { files: 2, fields: 8, parts: 10 } });
       const fields: Record<string, string> = {};
@@ -48,6 +50,12 @@ export const debugLogRoutes: FastifyPluginAsync = async (fastify) => {
           }
           fileBuffer = Buffer.concat(chunks);
           fileName = safeStorageFileName(part.filename || 'debug.log');
+          activityBody.log_file = {
+            file_name: fileName,
+            mime_type: part.mimetype,
+            size: fileBuffer.length,
+            content: '[binary omitted]'
+          };
           continue;
         }
 
@@ -59,7 +67,10 @@ export const debugLogRoutes: FastifyPluginAsync = async (fastify) => {
         }
         seenFields.add(part.fieldname);
         fields[part.fieldname] = String(part.value);
+        activityBody[part.fieldname] = fields[part.fieldname];
       }
+
+      setActivityRequestBody(request, activityBody);
 
       const sn = requiredText(fields, 'sn', 128);
       const timestamp = requiredText(fields, 'ts', 13);
@@ -72,6 +83,7 @@ export const debugLogRoutes: FastifyPluginAsync = async (fastify) => {
       await debugLogService.save({ sn, timestamp, fileName, fileBuffer });
       return reply.status(200).send({ code: 0 });
     } catch (error) {
+      setActivityRequestBody(request, activityBody);
       if (error instanceof DebugLogRequestError) {
         return reply.status(error.statusCode).send({ code: error.statusCode, msg: error.message });
       }

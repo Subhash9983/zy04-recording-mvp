@@ -11,7 +11,8 @@
 - Phase 5 commit: `780cebe`
 - Phase 6 commit: `0da3c08`
 - Phase 7 commit: `53175a1`
-- Phase 8: the commit containing admin authentication and audit foundation
+- Phase 8 commit: `d753557`
+- Phase 9: the commit containing admin dashboard backend APIs and live activity
 
 ## Implemented endpoints
 
@@ -25,12 +26,24 @@
 - `POST /api/admin/auth/login`
 - `POST /api/admin/auth/logout`
 - `GET /api/admin/auth/me`
+- `GET /api/admin/activity/stream`
+- `GET /api/admin/overview`
+- `GET /api/admin/devices`
+- `GET /api/admin/devices/:sn`
+- `GET /api/admin/devices/:sn/activity`
+- `GET /api/admin/alerts`
+- `GET /api/admin/audit-logs`
+- `GET /api/admin/recordings`
+- `GET /api/admin/logs/status`
+- `GET /api/admin/logs/report`
+- `GET /api/admin/logs/debug`
+- `GET /api/admin/firmware`
 - `GET /api/recordings`
 - `GET /api/recordings/:id`
 - `GET /api/recordings/:id/audio`
 - `GET /health`
 
-No configuration creation, firmware file upload, or Admin Dashboard data-management endpoints are implemented yet.
+No configuration creation, firmware file upload, frontend dashboard UI, or admin mutation APIs are implemented yet.
 
 ## Important files
 
@@ -60,6 +73,9 @@ No configuration creation, firmware file upload, or Admin Dashboard data-managem
 - Single admin identity: `backend/src/models/Admin.ts`
 - Revocable admin sessions: `backend/src/models/AdminSession.ts`
 - Append-only audit history: `backend/src/models/AuditLog.ts`
+- Supplier API activity model/30-day retention: `backend/src/models/ApiActivity.ts`
+- Sanitized activity tracking and live event publication: `backend/src/services/apiActivityService.ts`
+- Authenticated dashboard REST/SSE routes: `backend/src/routes/adminDashboard.ts`
 - Recording storage abstraction and R2 configuration: `backend/src/services/storageService.ts`
 - Route registration: `backend/src/app.ts`
 
@@ -78,6 +94,7 @@ No configuration creation, firmware file upload, or Admin Dashboard data-managem
 - `Admin` enforces one `PRIMARY` administrator and stores only a salted scrypt password hash.
 - `AdminSession` stores only SHA-256 token hashes, expires after 24 hours via TTL, and supports revocation.
 - `AuditLog` records actor, action, target, sanitized metadata, request context, and creation time; application/model update and delete operations are rejected.
+- `ApiActivity` stores sanitized supplier request/response activity and has a 30-day TTL index on `created_at` plus device timeline indexes.
 - Existing unique `record_id` index remains.
 - New unique logical-slice index: `{ device_sn: 1, session_id: 1, serial: 1 }`.
 - The new index is partial on `slice_number` so legacy documents remain readable and existing rows require no destructive migration.
@@ -124,6 +141,12 @@ No configuration creation, firmware file upload, or Admin Dashboard data-managem
 - Missing, invalid, expired, or revoked sessions are rejected by admin middleware; logout revokes the session and clears the cookie.
 - Production startup rejects missing/incomplete `ADMIN_EMAIL`, `ADMIN_PASSWORD`, or `SESSION_SECRET`; values are never logged or committed.
 - Supplier `/sca/*` and OTA endpoints remain outside admin middleware.
+- The seven supplier endpoints are activity-tracked without requiring admin authentication; HTTP status, JSON response code, combined success, device SN, sanitized bodies, duration, and creation time are retained.
+- Recursive activity sanitization redacts credential-like keys, bounds payload structure/text, and replaces buffers with metadata-only omission markers.
+- Recording/debug multipart activity contains text fields and file name/type/size metadata but never file bytes.
+- All Phase 9 dashboard REST endpoints and the SSE stream use `requireAdmin`; the intentionally public login route remains the only unauthenticated admin entry point.
+- Dashboard list endpoints use bounded pagination and explicit field selection; recording/debug responses omit local filesystem paths and storage object paths.
+- The authenticated SSE endpoint sends ready, heartbeat, and newly persisted activity events without polling MongoDB.
 
 ## Phase 2 changed files
 
@@ -212,6 +235,18 @@ Backend and frontend production builds pass. In-memory checks pass for empty res
 
 Backend and frontend production builds pass. Cryptographic and in-memory HTTP checks pass for password hashing, login success/failure, 24-hour signed sessions, valid/invalid/missing `me`, logout revocation/cookie clearing, login/logout/future audit events, append-only guards, production configuration failure, and unprotected supplier endpoints. No MongoDB connection was made.
 
+## Phase 9 changed files
+
+- `backend/src/models/ApiActivity.ts`
+- `backend/src/services/apiActivityService.ts`
+- `backend/src/routes/adminDashboard.ts`
+- `backend/src/routes/debugLog.ts`
+- `backend/src/routes/recordUpload.ts`
+- `backend/src/app.ts`
+- `ZY04-IMPLEMENTATION-STATE.md`
+
+In-memory HTTP checks pass for authentication on every Phase 9 admin route, supplier routes remaining public, success/failure capture, response-code semantics, recursively sanitized request/response bodies, multipart binary omission, live SSE delivery, overview counts, and the exact 30-day TTL. Backend and frontend production builds pass. No MongoDB connection was made.
+
 ## Known blockers and risks
 
 - LZ4 framing is unconfirmed. Complete compressed sessions stop at `PENDING_LZ4_CONFIRMATION`; originals are preserved and no decompression/decoding is attempted.
@@ -223,4 +258,4 @@ Backend and frontend production builds pass. Cryptographic and in-memory HTTP ch
 
 ## Exact next phase
 
-Phase 9 scope awaits explicit instruction. Future admin routes must use `requireAdmin` and `writeAuditLog`; do not infer frontend UI or deployment work.
+Phase 10 scope awaits explicit instruction. Keep all future dashboard/data APIs behind `requireAdmin`, use `writeAuditLog` for admin mutations, and do not infer frontend UI, deployment, config creation, or firmware upload work.
