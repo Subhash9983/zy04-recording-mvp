@@ -13,7 +13,8 @@
 - Phase 7 commit: `53175a1`
 - Phase 8 commit: `d753557`
 - Phase 9 commit: `3b118d3`
-- Phase 10: the commit containing the admin dashboard overview UI
+- Phase 10 commit: `114a24e`
+- Phase 11: the commit containing dashboard management actions
 
 ## Implemented endpoints
 
@@ -39,12 +40,21 @@
 - `GET /api/admin/logs/report`
 - `GET /api/admin/logs/debug`
 - `GET /api/admin/firmware`
+- `POST /api/admin/configs`
+- `POST /api/admin/firmware`
+- `PUT /api/admin/firmware/:id`
+- `POST /api/admin/firmware/:id/disable`
+- `GET /api/admin/recordings/:id/wav`
+- `GET /api/admin/recordings/:id/original`
+- `POST /api/admin/recordings/:id/retry`
+- `GET /api/admin/logs/debug/:id/download`
+- `POST /api/admin/logs/debug/:id/delete`
 - `GET /api/recordings`
 - `GET /api/recordings/:id`
 - `GET /api/recordings/:id/audio`
 - `GET /health`
 
-No configuration creation, firmware file upload, frontend management actions, or admin mutation APIs are implemented yet.
+Firmware binary upload remains intentionally unimplemented; URL-based firmware and the requested Phase 11 management actions are implemented.
 
 ## Important files
 
@@ -81,6 +91,8 @@ No configuration creation, firmware file upload, frontend management actions, or
 - Credentialed admin API client and SSE URL: `frontend/src/api.ts`
 - Frontend admin API response contracts: `frontend/src/types.ts`
 - Responsive admin dashboard styling: `frontend/src/styles.css`
+- Admin management validation/creation service: `backend/src/services/adminManagementService.ts`
+- Authenticated and audited admin management routes: `backend/src/routes/adminManagement.ts`
 - Recording storage abstraction and R2 configuration: `backend/src/services/storageService.ts`
 - Route registration: `backend/src/app.ts`
 
@@ -156,7 +168,16 @@ No configuration creation, firmware file upload, frontend management actions, or
 - The responsive dashboard prioritizes active alerts, derives active/offline fleet state from a five-minute last-seen window, and provides overview, device, device-detail, live activity, and alert-history views.
 - Device details separate activity, recordings, status reports, general reports, and debug-log metadata into read-only tabs.
 - Live API activity provides all seven supplier endpoint tabs, connection state, bounded exponential reconnects, and a full sanitized request/response detail modal.
-- Frontend admin views consume only path-free API contract fields and expose no configuration, OTA, delete, or other management action.
+- Frontend admin views consume only path-free API contract fields; no physical-delete or firmware-binary-upload action is exposed.
+- Admin configuration creation accepts one or multiple known devices, combines common/advanced settings, and rejects every key outside the 19 documented supplier configuration keys.
+- Configuration audits contain device targets and setting names only; sensitive setting values are not copied into audit metadata.
+- URL firmware can be created for one or multiple models, updated, enabled, or disabled; forced delivery and version downgrade require `confirm_force_or_downgrade: true`.
+- Admin recording routes stream available WAV/original objects through R2/local storage without returning object keys or paths; retry accepts only complete uncompressed sessions without active processing or a valid existing WAV.
+- Admin debug-log download streams storage content, while deletion only sets `deleted_at` and preserves the underlying object for recovery.
+- Every Phase 11 mutation is authenticated and writes its audit intent before changing state; administrative downloads are audited as well.
+- Supplier endpoint contracts and authentication boundaries are unchanged.
+- Activity sanitization additionally redacts documented S3 configuration, extra headers, and proxy configuration so config delivery cannot retain embedded credentials.
+- The dashboard now includes confirmed multi-device configuration and model-wide URL firmware forms, firmware edit/enable/disable controls, safe recording actions, and confirmed debug-log soft deletion with audit-friendly feedback.
 
 ## Phase 2 changed files
 
@@ -267,15 +288,30 @@ In-memory HTTP checks pass for authentication on every Phase 9 admin route, supp
 
 Frontend production build passes. Isolated API checks pass for credentialed login, session verification, logout, 401 handling, protected/login route redirects, and bounded SSE reconnect backoff. Static contract checks confirm empty states for devices, activity, recordings, status/report/debug logs, and active/resolved alerts, with no storage or filesystem path fields used by the frontend. Backend production build passes. No production database was contacted.
 
+## Phase 11 changed files
+
+- `backend/src/services/adminManagementService.ts`
+- `backend/src/routes/adminManagement.ts`
+- `backend/src/routes/adminDashboard.ts`
+- `backend/src/services/apiActivityService.ts`
+- `backend/src/app.ts`
+- `frontend/src/App.tsx`
+- `frontend/src/api.ts`
+- `frontend/src/types.ts`
+- `frontend/src/styles.css`
+- `ZY04-IMPLEMENTATION-STATE.md`
+
+Isolated backend checks pass for authentication on all new routes, unchanged public supplier access, single/multiple config creation, invalid config-key rejection, firmware create/list/update/disable, explicit force/downgrade confirmation, path-free recording/debug downloads, safe recording retry, debug soft delete, sensitive config redaction, and mutation/download audit coverage. Isolated frontend checks pass for credentialed management requests, download triggers, and downgrade detection. Backend and frontend production builds pass. No MongoDB, R2, production file, deployment, or merge operation was performed; temporary verification files were removed.
+
 ## Known blockers and risks
 
 - LZ4 framing is unconfirmed. Complete compressed sessions stop at `PENDING_LZ4_CONFIRMATION`; originals are preserved and no decompression/decoding is attempted.
 - Supplier `opus-decoder-core` compatibility remains `UNVERIFIED`; the installed decoder is `opus-decoder`.
 - The processing guard is reliable for the current single-process service, but there is no multi-instance lock or durable restart queue.
 - Render local storage is ephemeral; production must provide R2 configuration. Local fallback remains development/legacy-only.
-- Firmware file upload/storage is pending; Phase 7 intentionally supports URL catalog entries only.
-- Configuration creation UI remains pending. Delivered configurations are redelivered until a successful acknowledgement.
+- Firmware binary upload/storage is pending; firmware management intentionally remains URL-based.
+- Delivered configurations continue to be redelivered until a successful badge acknowledgement.
 
 ## Exact next phase
 
-Phase 11 scope awaits explicit instruction. Keep all future admin APIs authenticated and audited, and do not infer deployment, configuration/OTA management actions, deletion, or other risky mutations.
+Phase 12 scope awaits explicit instruction. Keep all future admin APIs authenticated and mutations audited; do not infer deployment, physical file deletion, firmware binary upload, or supplier-contract changes.

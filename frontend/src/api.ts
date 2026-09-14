@@ -6,6 +6,9 @@ import {
   DeviceDetailData,
   DeviceItem,
   DeviceLog,
+  CreateConfigInput,
+  FirmwareInput,
+  FirmwareItem,
   OverviewData,
   Paginated,
   RecordingItem
@@ -101,6 +104,68 @@ export function getReportLogs(): Promise<Paginated<DeviceLog>> {
 
 export function getDebugLogs(): Promise<Paginated<DebugLog>> {
   return request('/api/admin/logs/debug?limit=100');
+}
+
+export function createConfigs(input: CreateConfigInput): Promise<{ created: Array<{ id: string; device_sn: string; session_id: string }> }> {
+  return request('/api/admin/configs', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function getFirmware(): Promise<Paginated<FirmwareItem>> {
+  return request('/api/admin/firmware?limit=100');
+}
+
+export function createFirmware(input: FirmwareInput): Promise<{ created: FirmwareItem[] }> {
+  return request('/api/admin/firmware', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function updateFirmware(id: string, input: Partial<FirmwareInput>): Promise<FirmwareItem> {
+  return request(`/api/admin/firmware/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) });
+}
+
+export function disableFirmware(id: string): Promise<{ id: string; enabled: false }> {
+  return request(`/api/admin/firmware/${encodeURIComponent(id)}/disable`, { method: 'POST' });
+}
+
+export function retryRecording(id: string): Promise<{ record_id: string; status: string }> {
+  return request(`/api/admin/recordings/${encodeURIComponent(id)}/retry`, { method: 'POST' });
+}
+
+export function softDeleteDebugLog(id: string): Promise<{ id: string; deleted_at: string }> {
+  return request(`/api/admin/logs/debug/${encodeURIComponent(id)}/delete`, { method: 'POST' });
+}
+
+async function download(path: string, fallbackName: string): Promise<void> {
+  const response = await fetch(`${API_BASE}${path}`, { credentials: 'include' });
+  if (!response.ok) {
+    if (response.status === 401) window.dispatchEvent(new Event('admin-unauthorized'));
+    let message = `Download failed (${response.status})`;
+    try {
+      const error = await response.json() as { msg?: string };
+      if (error.msg) message = error.msg;
+    } catch { /* keep generic message */ }
+    throw new ApiError(response.status, message);
+  }
+  const blobUrl = URL.createObjectURL(await response.blob());
+  const link = document.createElement('a');
+  link.href = blobUrl;
+  link.download = fallbackName;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1_000);
+}
+
+export function downloadRecordingWav(id: string): Promise<void> {
+  return download(`/api/admin/recordings/${encodeURIComponent(id)}/wav`, `${id}.wav`);
+}
+
+export function downloadRecordingOriginal(id: string, fileName: string): Promise<void> {
+  return download(`/api/admin/recordings/${encodeURIComponent(id)}/original`, fileName || `${id}.opus`);
+}
+
+export function downloadDebugLog(id: string, fileName: string): Promise<void> {
+  return download(`/api/admin/logs/debug/${encodeURIComponent(id)}/download`, fileName || 'debug.log');
 }
 
 export function activityStreamUrl(): string {

@@ -92,6 +92,40 @@ export interface RecordingItem {
   sample_rate?: number;
   serial?: string;
   slice_number?: number;
+  compress?: string | null;
+}
+
+export interface FirmwareItem {
+  id: string;
+  device_model: string;
+  firmware_type: 'esp' | 'dsp';
+  firmware_version: string;
+  url: string;
+  md5: string;
+  update_type: 'force' | 'default';
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type ConfigValue = string | number;
+
+export interface CreateConfigInput {
+  device_sns: string[];
+  common_settings: Record<string, ConfigValue>;
+  advanced_settings: Record<string, ConfigValue>;
+}
+
+export interface FirmwareInput {
+  device_models?: string[];
+  device_model?: string;
+  firmware_type: 'esp' | 'dsp';
+  firmware_version: string;
+  url: string;
+  md5: string;
+  update_type: 'force' | 'default';
+  enabled: boolean;
+  confirm_force_or_downgrade: boolean;
 }
 
 export interface DeviceLog {

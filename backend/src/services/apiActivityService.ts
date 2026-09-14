@@ -12,7 +12,7 @@ const TRACKED_ROUTES = new Set([
   '/ota/v1/fetch_new_firmware'
 ]);
 
-const SENSITIVE_KEY = /(password|secret|token|authorization|cookie|api[_-]?key)/i;
+const SENSITIVE_KEY = /(password|secret|token|authorization|cookie|api[_-]?key|s3_config|extra_headers|http_proxy)/i;
 const activityEvents = new EventEmitter();
 activityEvents.setMaxListeners(0);
 

@@ -2,6 +2,12 @@ import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState
 import {
   activityStreamUrl,
   ApiError,
+  createConfigs,
+  createFirmware,
+  disableFirmware,
+  downloadDebugLog,
+  downloadRecordingOriginal,
+  downloadRecordingWav,
   getAdminRecordings,
   getAlerts,
   getCurrentAdmin,
@@ -9,11 +15,15 @@ import {
   getDevice,
   getDeviceActivity,
   getDevices,
+  getFirmware,
   getOverview,
   getReportLogs,
   getStatusLogs,
   login,
-  logout
+  logout,
+  retryRecording,
+  softDeleteDebugLog,
+  updateFirmware
 } from './api';
 import {
   AdminUser,
@@ -23,6 +33,8 @@ import {
   DeviceDetailData,
   DeviceItem,
   DeviceLog,
+  FirmwareInput,
+  FirmwareItem,
   OverviewData,
   RecordingItem
 } from './types';
@@ -125,6 +137,10 @@ function EmptyState({ title, detail }: { title: string; detail: string }) {
 
 function ErrorBanner({ message }: { message: string | null }) {
   return message ? <div className="error-banner" role="alert">{message}</div> : null;
+}
+
+function ActionNotice({ notice }: { notice: { tone: 'success' | 'error'; message: string } | null }) {
+  return notice ? <div className={notice.tone === 'success' ? 'success-banner' : 'error-banner'} role="status">{notice.message}</div> : null;
 }
 
 function LoadingBlock() {
@@ -283,6 +299,8 @@ function DeviceDetailPage({ sn }: { sn: string }) {
   const [tab, setTab] = useState<DetailTab>('Activity');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -303,12 +321,25 @@ function DeviceDetailPage({ sn }: { sn: string }) {
   const percent = device ? storagePercent(device) : null;
   const tabs: DetailTab[] = ['Activity', 'Recordings', 'Status Logs', 'Report Logs', 'Debug Logs'];
 
+  const runAction = async (key: string, action: () => Promise<void>, successMessage: string) => {
+    setBusyAction(key);
+    setNotice(null);
+    try {
+      await action();
+      setNotice({ tone: 'success', message: successMessage });
+    } catch (reason) {
+      setNotice({ tone: 'error', message: reason instanceof Error ? reason.message : 'Action failed' });
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
   const renderTab = () => {
     if (tab === 'Activity') return activity.length ? <ActivityTable items={activity} compact /> : <EmptyState title="No activity" detail="No retained supplier API activity exists for this device." />;
-    if (tab === 'Recordings') return recordings.length ? <div className="compact-list">{recordings.map((item) => <div className="list-row" key={item.record_id}><div><strong>{item.file_name || item.record_id}</strong><span>Session {item.session_id} · slice {item.slice_number ?? '—'}</span></div><Pill tone={item.status === 'FAILED' ? 'danger' : item.status === 'READY' ? 'success' : 'neutral'}>{item.status}</Pill></div>)}</div> : <EmptyState title="No recordings" detail="No recording slices have been received for this device." />;
+    if (tab === 'Recordings') return recordings.length ? <div className="compact-list">{recordings.map((item) => <div className="list-row action-row" key={item.record_id}><div><strong>{item.file_name || item.record_id}</strong><span>Session {item.session_id} · slice {item.slice_number ?? '—'}</span></div><div className="row-actions"><Pill tone={item.status === 'FAILED' ? 'danger' : item.status === 'READY' ? 'success' : 'neutral'}>{item.status}</Pill>{item.status === 'READY' && <button disabled={busyAction !== null} onClick={() => void runAction(`wav-${item.record_id}`, () => downloadRecordingWav(item.record_id), 'WAV download started and was added to the audit trail.')}>WAV</button>}<button disabled={busyAction !== null} onClick={() => void runAction(`original-${item.record_id}`, () => downloadRecordingOriginal(item.record_id, item.file_name || `${item.record_id}.opus`), 'Original-slice download started and was added to the audit trail.')}>Original</button>{item.status === 'FAILED' && item.compress?.toLowerCase() !== 'lz4' && <button className="warning-button" disabled={busyAction !== null} onClick={() => { if (window.confirm('Retry safe processing for this complete, uncompressed session?')) void runAction(`retry-${item.record_id}`, async () => { const result = await retryRecording(item.record_id); setRecordings((current) => current.map((entry) => entry.session_id === item.session_id ? { ...entry, status: result.status as RecordingItem['status'] } : entry)); }, 'Processing retry completed and was recorded in the audit trail.'); }}>Retry</button>}</div></div>)}</div> : <EmptyState title="No recordings" detail="No recording slices have been received for this device." />;
     if (tab === 'Status Logs') return statusLogs.length ? <LogList items={statusLogs} /> : <EmptyState title="No status logs" detail="Status reports will appear after the device reports health." />;
     if (tab === 'Report Logs') return reportLogs.length ? <LogList items={reportLogs} /> : <EmptyState title="No report logs" detail="Operational reports will appear here when received." />;
-    return debugLogs.length ? <div className="compact-list">{debugLogs.map((item) => <div className="list-row" key={item.id}><div><strong>{item.file_name}</strong><span>{formatTime(item.uploaded_at)} · {Math.ceil(item.size / 1024)} KB</span></div><Pill>{item.storage_mode}</Pill></div>)}</div> : <EmptyState title="No debug logs" detail="No debug log files have been uploaded for this device." />;
+    return debugLogs.length ? <div className="compact-list">{debugLogs.map((item) => <div className="list-row action-row" key={item.id}><div><strong>{item.file_name}</strong><span>{formatTime(item.uploaded_at)} · {Math.ceil(item.size / 1024)} KB</span></div><div className="row-actions"><Pill>{item.storage_mode}</Pill><button disabled={busyAction !== null} onClick={() => void runAction(`debug-download-${item.id}`, () => downloadDebugLog(item.id, item.file_name), 'Debug-log download started and was added to the audit trail.')}>Download</button><button className="danger-button" disabled={busyAction !== null} onClick={() => { if (window.confirm(`Soft delete ${item.file_name}? The stored file will be retained.`)) void runAction(`debug-delete-${item.id}`, async () => { await softDeleteDebugLog(item.id); setDebugLogs((current) => current.filter((entry) => entry.id !== item.id)); }, 'Debug log was hidden with a recoverable soft delete and audited.'); }}>Delete</button></div></div>)}</div> : <EmptyState title="No debug logs" detail="No debug log files have been uploaded for this device." />;
   };
 
   return (
@@ -316,6 +347,7 @@ function DeviceDetailPage({ sn }: { sn: string }) {
       <a className="back-link" href="#/devices">← All devices</a>
       <PageHeader title={sn} description={device ? `${device.model || device.product} · last seen ${relativeTime(device.last_seen_at)}` : 'Device details'} />
       <ErrorBanner message={error} />
+      <ActionNotice notice={notice} />
       {loading ? <LoadingBlock /> : !device ? <EmptyState title="Device unavailable" detail="The device could not be found or loaded." /> : <>
         {detail.active_alerts.length > 0 && <div className="inline-alerts">{detail.active_alerts.map((alert) => <div key={alert.id}><span className="alert-dot" /><strong>{alertLabel(alert.type)}</strong><span>Observed {relativeTime(alert.last_observed_at)}</span></div>)}</div>}
         <section className="health-grid">
@@ -418,12 +450,137 @@ function AlertsPage() {
   return <><PageHeader title="Alerts" description="Current device problems and preserved resolution history." /><ErrorBanner message={error} />{loading ? <LoadingBlock /> : <div className="stack"><section className="section-block"><div className="section-heading"><h2>Active alerts</h2><Pill tone={active.length ? 'danger' : 'success'}>{active.length}</Pill></div>{list(active, 'No active alerts')}</section><section className="section-block"><div className="section-heading"><h2>Resolved history</h2><Pill>{resolved.length}</Pill></div>{list(resolved, 'No resolved alerts')}</section></div>}</>;
 }
 
+function ConfigManagementPage() {
+  const [devices, setDevices] = useState<DeviceItem[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [common, setCommon] = useState({ record_mode: '0', record_time: '7200', record_ignore_time: '10', retry_delay: '0', duor: false, no_switch: false });
+  const [advanced, setAdvanced] = useState({ domain: '', domain_apm: '', domain_config: '', s3_config: '', s3_callback: false, snapshot_status: false, tz: 'UTC-8', compress: '', disable_tls: false, http_proxy: '', extra_headers: '', modem_apn: '', preferred_network: 'wifi' });
+
+  useEffect(() => {
+    getDevices().then((result) => setDevices(result.items)).catch((reason) => setNotice({ tone: 'error', message: reason instanceof Error ? reason.message : 'Unable to load devices' }));
+  }, []);
+
+  const toggleDevice = (sn: string) => setSelected((current) => current.includes(sn) ? current.filter((item) => item !== sn) : [...current, sn]);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setNotice(null);
+    if (!selected.length) return setNotice({ tone: 'error', message: 'Select at least one device.' });
+    if (!window.confirm(`Queue this configuration for ${selected.length} device${selected.length === 1 ? '' : 's'}? It will be redelivered until acknowledged.`)) return;
+    const advancedStrings = Object.fromEntries(
+      (['domain', 'domain_apm', 'domain_config', 's3_config', 'tz', 'http_proxy', 'extra_headers', 'modem_apn', 'preferred_network'] as const)
+        .filter((key) => advanced[key] !== '')
+        .map((key) => [key, advanced[key]])
+    );
+    setBusy(true);
+    try {
+      const result = await createConfigs({
+        device_sns: selected,
+        common_settings: {
+          record_mode: Number(common.record_mode), record_time: Number(common.record_time),
+          record_ignore_time: Number(common.record_ignore_time), retry_delay: Number(common.retry_delay),
+          duor: common.duor ? 1 : 0, no_switch: common.no_switch ? 1 : 0
+        },
+        advanced_settings: {
+          ...advancedStrings,
+          compress: advanced.compress,
+          s3_callback: advanced.s3_callback ? 1 : 0,
+          snapshot_status: advanced.snapshot_status ? 1 : 0,
+          disable_tls: advanced.disable_tls ? 1 : 0
+        }
+      });
+      setNotice({ tone: 'success', message: `${result.created.length} configuration${result.created.length === 1 ? '' : 's'} queued and written to the audit trail.` });
+    } catch (reason) {
+      setNotice({ tone: 'error', message: reason instanceof Error ? reason.message : 'Configuration creation failed' });
+    } finally { setBusy(false); }
+  };
+
+  return <><PageHeader title="Configuration" description="Queue documented badge settings for one or several devices." /><ActionNotice notice={notice} /><form className="management-form" onSubmit={submit}><section className="section-block"><div className="section-heading"><div><p className="eyebrow">TARGETS</p><h2>Select devices</h2></div><button type="button" className="text-button" onClick={() => setSelected(selected.length === devices.length ? [] : devices.map((device) => device.sn))}>{selected.length === devices.length && devices.length ? 'Clear all' : 'Select all'}</button></div>{devices.length ? <div className="selection-grid">{devices.map((device) => <label className={selected.includes(device.sn) ? 'selected' : ''} key={device.id}><input type="checkbox" checked={selected.includes(device.sn)} onChange={() => toggleDevice(device.sn)} /><span><strong>{device.sn}</strong><small>{device.model || device.product}</small></span></label>)}</div> : <EmptyState title="No devices" detail="A device must check in before a configuration can be queued." />}</section><section className="section-block"><div className="section-heading"><div><p className="eyebrow">COMMON SETTINGS</p><h2>Recording behavior</h2></div></div><div className="form-grid"><label>Record mode<select value={common.record_mode} onChange={(event) => setCommon({ ...common, record_mode: event.target.value })}><option value="0">Normal</option><option value="1">Wearer only</option></select></label><label>Segment duration (seconds)<input type="number" min="600" max="7200" value={common.record_time} onChange={(event) => setCommon({ ...common, record_time: event.target.value })} required /></label><label>Minimum recording (seconds)<input type="number" min="0" max="600" value={common.record_ignore_time} onChange={(event) => setCommon({ ...common, record_ignore_time: event.target.value })} required /></label><label>Retry delay (seconds)<input type="number" min="0" max="86400" value={common.retry_delay} onChange={(event) => setCommon({ ...common, retry_delay: event.target.value })} required /></label></div><div className="toggle-row"><label><input type="checkbox" checked={common.duor} onChange={(event) => setCommon({ ...common, duor: event.target.checked })} /> No upload during recording</label><label><input type="checkbox" checked={common.no_switch} onChange={(event) => setCommon({ ...common, no_switch: event.target.checked })} /> Disable physical switch</label></div></section><section className="section-block"><button type="button" className="advanced-toggle" onClick={() => setAdvancedOpen(!advancedOpen)}><span><span className="eyebrow">ADVANCED</span><strong>Network, storage, and transport</strong></span><span>{advancedOpen ? '−' : '+'}</span></button>{advancedOpen && <div className="advanced-fields"><div className="form-grid">{(['domain', 'domain_apm', 'domain_config'] as const).map((key) => <label key={key}>{key.replace(/_/g, ' ')}<input value={advanced[key]} onChange={(event) => setAdvanced({ ...advanced, [key]: event.target.value })} placeholder="Host name" /></label>)}<label>Timezone<input value={advanced.tz} onChange={(event) => setAdvanced({ ...advanced, tz: event.target.value })} /></label><label>Compression<select value={advanced.compress} onChange={(event) => setAdvanced({ ...advanced, compress: event.target.value })}><option value="">Off</option><option value="lz4">LZ4 (supplier framing pending)</option></select></label><label>Preferred network<select value={advanced.preferred_network} onChange={(event) => setAdvanced({ ...advanced, preferred_network: event.target.value })}><option value="wifi">Wi-Fi</option><option value="lte">LTE</option><option value="only_wifi">Wi-Fi only</option><option value="only_lte">LTE only</option></select></label><label>HTTP proxy<input value={advanced.http_proxy} onChange={(event) => setAdvanced({ ...advanced, http_proxy: event.target.value })} /></label><label>Mobile APN<input value={advanced.modem_apn} onChange={(event) => setAdvanced({ ...advanced, modem_apn: event.target.value })} /></label><label className="span-2">S3 configuration<input type="password" autoComplete="off" value={advanced.s3_config} onChange={(event) => setAdvanced({ ...advanced, s3_config: event.target.value })} placeholder="Credentials are never included in audit metadata" /></label><label className="span-2">Extra headers<textarea value={advanced.extra_headers} onChange={(event) => setAdvanced({ ...advanced, extra_headers: event.target.value })} /></label></div><div className="toggle-row"><label><input type="checkbox" checked={advanced.s3_callback} onChange={(event) => setAdvanced({ ...advanced, s3_callback: event.target.checked })} /> S3 callback</label><label><input type="checkbox" checked={advanced.snapshot_status} onChange={(event) => setAdvanced({ ...advanced, snapshot_status: event.target.checked })} /> Segment status reports</label><label><input type="checkbox" checked={advanced.disable_tls} onChange={(event) => setAdvanced({ ...advanced, disable_tls: event.target.checked })} /> Disable TLS</label></div></div>}</section><div className="form-actions"><span>{selected.length} device{selected.length === 1 ? '' : 's'} selected</span><button className="primary-button" disabled={busy || !devices.length}>{busy ? 'Queueing…' : 'Review and queue'}</button></div></form></>;
+}
+
+const EMPTY_FIRMWARE: FirmwareInput = { device_models: [], firmware_type: 'esp', firmware_version: '', url: '', md5: '', update_type: 'default', enabled: true, confirm_force_or_downgrade: false };
+
+export function compareFirmwareVersions(left: string, right: string): number {
+  const leftParts = left.split(/[._+-]/);
+  const rightParts = right.split(/[._+-]/);
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+    const leftPart = leftParts[index] || '0';
+    const rightPart = rightParts[index] || '0';
+    const comparison = /^\d+$/.test(leftPart) && /^\d+$/.test(rightPart)
+      ? (BigInt(leftPart) > BigInt(rightPart) ? 1 : BigInt(leftPart) < BigInt(rightPart) ? -1 : 0)
+      : leftPart.toLowerCase().localeCompare(rightPart.toLowerCase());
+    if (comparison !== 0) return comparison > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+function FirmwareManagementPage() {
+  const [items, setItems] = useState<FirmwareItem[]>([]);
+  const [form, setForm] = useState<FirmwareInput>(EMPTY_FIRMWARE);
+  const [modelsText, setModelsText] = useState('');
+  const [editing, setEditing] = useState<FirmwareItem | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const load = useCallback(() => getFirmware().then((result) => setItems(result.items)).catch((reason) => setNotice({ tone: 'error', message: reason instanceof Error ? reason.message : 'Unable to load firmware' })), []);
+  useEffect(() => { void load(); }, [load]);
+
+  const reset = () => { setEditing(null); setModelsText(''); setForm(EMPTY_FIRMWARE); };
+  const beginEdit = (item: FirmwareItem) => {
+    setEditing(item); setModelsText(item.device_model);
+    setForm({ device_model: item.device_model, firmware_type: item.firmware_type, firmware_version: item.firmware_version, url: item.url, md5: item.md5, update_type: item.update_type, enabled: item.enabled, confirm_force_or_downgrade: false });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  const submit = async (event: FormEvent) => {
+    event.preventDefault(); setNotice(null);
+    const models = modelsText.split(',').map((item) => item.trim()).filter(Boolean);
+    if (!models.length) return setNotice({ tone: 'error', message: 'Enter at least one device model.' });
+    const sensitive = form.update_type === 'force' || Boolean(
+      editing && compareFirmwareVersions(form.firmware_version, editing.firmware_version) < 0
+    );
+    if (sensitive && !form.confirm_force_or_downgrade) return setNotice({ tone: 'error', message: 'Confirm the force/downgrade acknowledgement before submitting.' });
+    if (!window.confirm(`${editing ? 'Update' : 'Create'} firmware ${form.firmware_version} for ${models.join(', ')}?`)) return;
+    setBusy(true);
+    try {
+      if (editing) {
+        await updateFirmware(editing.id, { ...form, device_model: models[0], device_models: undefined });
+        setNotice({ tone: 'success', message: 'Firmware updated and written to the audit trail.' });
+      } else {
+        const result = await createFirmware({ ...form, device_models: models, device_model: undefined });
+        setNotice({ tone: 'success', message: `${result.created.length} model-wide firmware assignment${result.created.length === 1 ? '' : 's'} created and audited.` });
+      }
+      reset(); await load();
+    } catch (reason) { setNotice({ tone: 'error', message: reason instanceof Error ? reason.message : 'Firmware action failed' }); }
+    finally { setBusy(false); }
+  };
+  const setEnabled = async (item: FirmwareItem, enabled: boolean) => {
+    if (!window.confirm(`${enabled ? 'Enable' : 'Disable'} ${item.firmware_type.toUpperCase()} ${item.firmware_version} for ${item.device_model}?`)) return;
+    setBusy(true); setNotice(null);
+    try {
+      if (enabled) {
+        await updateFirmware(item.id, {
+          enabled: true,
+          confirm_force_or_downgrade: item.update_type === 'force'
+        });
+      } else await disableFirmware(item.id);
+      setNotice({ tone: 'success', message: `Firmware ${enabled ? 'enabled' : 'disabled'} and written to the audit trail.` });
+      await load();
+    } catch (reason) { setNotice({ tone: 'error', message: reason instanceof Error ? reason.message : 'Firmware action failed' }); }
+    finally { setBusy(false); }
+  };
+
+  return <><PageHeader title="Firmware" description="Manage URL-based ESP and DSP packages by device model." /><ActionNotice notice={notice} /><form className="section-block management-form" onSubmit={submit}><div className="section-heading"><div><p className="eyebrow">{editing ? 'UPDATE PACKAGE' : 'NEW PACKAGE'}</p><h2>{editing ? `Editing ${editing.device_model}` : 'Model-wide assignment'}</h2></div>{editing && <button type="button" className="text-button" onClick={reset}>Cancel edit</button>}</div><div className="form-grid"><label>Device model{!editing && 's (comma separated)'}<input value={modelsText} onChange={(event) => setModelsText(event.target.value)} required /></label><label>Firmware type<select value={form.firmware_type} onChange={(event) => setForm({ ...form, firmware_type: event.target.value as 'esp' | 'dsp' })}><option value="esp">ESP</option><option value="dsp">DSP</option></select></label><label>Version<input value={form.firmware_version} onChange={(event) => setForm({ ...form, firmware_version: event.target.value })} required /></label><label>MD5<input value={form.md5} pattern="[a-fA-F0-9]{32}" onChange={(event) => setForm({ ...form, md5: event.target.value })} required /></label><label className="span-2">Firmware URL<input type="url" value={form.url} onChange={(event) => setForm({ ...form, url: event.target.value })} required /></label><label>Update policy<select value={form.update_type} onChange={(event) => setForm({ ...form, update_type: event.target.value as 'force' | 'default' })}><option value="default">Newer versions only</option><option value="force">Force / allow downgrade</option></select></label><label className="confirmation-check"><input type="checkbox" checked={form.confirm_force_or_downgrade} onChange={(event) => setForm({ ...form, confirm_force_or_downgrade: event.target.checked })} /><span>I explicitly confirm force or downgrade risk</span></label></div><div className="form-actions"><span>URL packages only</span><button className="primary-button" disabled={busy}>{busy ? 'Saving…' : editing ? 'Confirm update' : 'Confirm and add'}</button></div></form><section className="section-block firmware-list"><div className="section-heading"><h2>Firmware catalog</h2><Pill>{items.length}</Pill></div>{items.length ? <div className="table-scroll"><table><thead><tr><th>Model</th><th>Type / version</th><th>Policy</th><th>State</th><th>Actions</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><strong>{item.device_model}</strong></td><td>{item.firmware_type.toUpperCase()} {item.firmware_version}<small className="truncate" title={item.url}>{item.url}</small></td><td><Pill tone={item.update_type === 'force' ? 'warning' : 'neutral'}>{item.update_type}</Pill></td><td><Pill tone={item.enabled ? 'success' : 'neutral'}>{item.enabled ? 'Enabled' : 'Disabled'}</Pill></td><td><div className="row-actions"><button onClick={() => beginEdit(item)}>Edit</button><button disabled={busy} className={item.enabled ? 'danger-button' : ''} onClick={() => void setEnabled(item, !item.enabled)}>{item.enabled ? 'Disable' : 'Enable'}</button></div></td></tr>)}</tbody></table></div> : <EmptyState title="No firmware" detail="Add the first URL-based firmware package above." />}</section></>;
+}
+
 function Dashboard({ admin, route, onLogout }: { admin: AdminUser; route: string; onLogout: () => void }) {
   const detailMatch = route.match(/^\/devices\/(.+)$/);
   const page = detailMatch ? <DeviceDetailPage sn={decodeURIComponent(detailMatch[1])} />
     : route === '/devices' ? <DevicesPage />
       : route === '/activity' ? <ActivityPage />
         : route === '/alerts' ? <AlertsPage />
+          : route === '/configuration' ? <ConfigManagementPage />
+            : route === '/firmware' ? <FirmwareManagementPage />
           : <OverviewPage />;
   const activeRoute = detailMatch ? '/devices' : route;
   return (
@@ -431,7 +588,7 @@ function Dashboard({ admin, route, onLogout }: { admin: AdminUser; route: string
       <aside className="sidebar">
         <div className="sidebar-brand"><div className="brand-mark small">Z4</div><div><strong>ZY04 Control</strong><span>Admin console</span></div></div>
         <nav aria-label="Primary navigation">
-          {[['/overview', 'Overview'], ['/devices', 'Devices'], ['/activity', 'API Activity'], ['/alerts', 'Alerts']].map(([path, label]) => <a className={activeRoute === path ? 'active' : ''} href={`#${path}`} key={path}><span className="nav-dot" />{label}</a>)}
+          {[['/overview', 'Overview'], ['/devices', 'Devices'], ['/activity', 'API Activity'], ['/alerts', 'Alerts'], ['/configuration', 'Configuration'], ['/firmware', 'Firmware']].map(([path, label]) => <a className={activeRoute === path ? 'active' : ''} href={`#${path}`} key={path}><span className="nav-dot" />{label}</a>)}
         </nav>
         <div className="sidebar-account"><span>Signed in as</span><strong title={admin.email}>{admin.email}</strong><button onClick={onLogout}>Sign out</button></div>
       </aside>

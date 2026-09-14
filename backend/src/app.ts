@@ -15,6 +15,7 @@ import { otaRoutes } from './routes/ota.js';
 import { adminAuthRoutes } from './routes/adminAuth.js';
 import { adminDashboardRoutes } from './routes/adminDashboard.js';
 import { installApiActivityTracking } from './services/apiActivityService.js';
+import { adminManagementRoutes } from './routes/adminManagement.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -63,6 +64,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(otaRoutes);
   await app.register(adminAuthRoutes);
   await app.register(adminDashboardRoutes);
+  await app.register(adminManagementRoutes);
   await app.register(recordUploadRoutes);
   await app.register(recordingRoutes);
 

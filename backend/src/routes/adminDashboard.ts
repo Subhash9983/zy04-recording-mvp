@@ -203,7 +203,7 @@ export const adminDashboardRoutes: FastifyPluginAsync = async (fastify) => {
       const [device, activeAlerts, configs, recordingCount, logCount] = await Promise.all([
         Device.findOne({ sn }).select('-__v').lean(),
         DeviceAlert.find({ device_sn: sn, status: 'ACTIVE' }).select('-__v').sort({ opened_at: -1 }).lean(),
-        DeviceConfig.find({ device_sn: sn }).select('-__v').sort({ created_at: -1 }).limit(25).lean(),
+        DeviceConfig.find({ device_sn: sn }).select('-__v -values').sort({ created_at: -1 }).limit(25).lean(),
         Recording.countDocuments({ device_sn: sn }),
         DeviceLog.countDocuments({ device_sn: sn })
       ]);
