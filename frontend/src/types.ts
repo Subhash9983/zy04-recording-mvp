@@ -81,8 +81,8 @@ export type RecordingStatus =
 export interface RecordingItem {
   id?: string;
   record_id: string;
-  device_sn: string;
-  session_id: string;
+  device_sn?: string;
+  session_id?: string;
   file_name?: string;
   duration_ms: number;
   status: RecordingStatus;
@@ -92,7 +92,12 @@ export interface RecordingItem {
   sample_rate?: number;
   serial?: string;
   slice_number?: number;
+  is_last_slice?: boolean;
   compress?: string | null;
+  missing_slices?: number[];
+  updated_at?: string;
+  original_available?: boolean;
+  wav_available?: boolean;
 }
 
 export interface FirmwareItem {

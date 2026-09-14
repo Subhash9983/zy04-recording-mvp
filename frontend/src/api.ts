@@ -88,10 +88,19 @@ export function getAlerts(status?: 'ACTIVE' | 'RESOLVED'): Promise<Paginated<Dev
   return request(`/api/admin/alerts${query}`);
 }
 
-export function getAdminRecordings(sn?: string): Promise<Paginated<RecordingItem>> {
-  const query = new URLSearchParams({ limit: '100' });
+export function getAdminRecordings(sn?: string, page = 1): Promise<Paginated<RecordingItem>> {
+  const query = new URLSearchParams({ limit: '100', page: String(page) });
   if (sn) query.set('sn', sn);
   return request(`/api/admin/recordings?${query}`);
+}
+
+export async function getAllAdminRecordings(): Promise<RecordingItem[]> {
+  const first = await getAdminRecordings();
+  if (first.pagination.pages <= 1) return first.items;
+  const remaining = await Promise.all(
+    Array.from({ length: first.pagination.pages - 1 }, (_, index) => getAdminRecordings(undefined, index + 2))
+  );
+  return [first, ...remaining].flatMap((page) => page.items);
 }
 
 export function getStatusLogs(): Promise<Paginated<DeviceLog>> {

@@ -15,7 +15,7 @@
 - Phase 9 commit: `3b118d3`
 - Phase 10 commit: `114a24e`
 - Phase 11 commit: `7d6a9eb`
-- Phase 12 verified code baseline: `7d6a9eb`
+- Phase 12 verification commit: `3af83bc`
 
 ## Implemented endpoints
 
@@ -179,6 +179,10 @@ Firmware binary upload remains intentionally unimplemented; URL-based firmware a
 - Supplier endpoint contracts and authentication boundaries are unchanged.
 - Activity sanitization additionally redacts documented S3 configuration, extra headers, and proxy configuration so config delivery cannot retain embedded credentials.
 - The dashboard now includes confirmed multi-device configuration and model-wide URL firmware forms, firmware edit/enable/disable controls, safe recording actions, and confirmed debug-log soft deletion with audit-friendly feedback.
+- The global `#/recordings` dashboard loads every page of `/api/admin/recordings`, so direct recording rows remain visible even when no matching Device document exists.
+- Global recordings are grouped by `device_sn + session_id` where possible, with isolated fallback rows for legacy records missing grouping fields.
+- Recording availability is exposed only as `original_available` and `wav_available` booleans; storage object keys and filesystem paths remain excluded.
+- The global view shows safe WAV/original downloads only when referenced storage is available and offers retry only for complete, failed, uncompressed sessions.
 
 ## Phase 2 changed files
 
@@ -303,6 +307,16 @@ Frontend production build passes. Isolated API checks pass for credentialed logi
 - `ZY04-IMPLEMENTATION-STATE.md`
 
 Isolated backend checks pass for authentication on all new routes, unchanged public supplier access, single/multiple config creation, invalid config-key rejection, firmware create/list/update/disable, explicit force/downgrade confirmation, path-free recording/debug downloads, safe recording retry, debug soft delete, sensitive config redaction, and mutation/download audit coverage. Isolated frontend checks pass for credentialed management requests, download triggers, and downgrade detection. Backend and frontend production builds pass. No MongoDB, R2, production file, deployment, or merge operation was performed; temporary verification files were removed.
+
+## Global recordings dashboard changed files
+
+- `backend/src/routes/adminDashboard.ts`
+- `frontend/src/App.tsx`
+- `frontend/src/api.ts`
+- `frontend/src/types.ts`
+- `ZY04-IMPLEMENTATION-STATE.md`
+
+Backend and frontend production builds pass. Static and type checks confirm the authenticated global route, all-page loading, session grouping, orphan fallback, empty state, safe action eligibility, unchanged device-detail Recordings tab, and path-free availability fields. No database, object storage, deployment, or merge operation was performed.
 
 ## Known blockers and risks
 

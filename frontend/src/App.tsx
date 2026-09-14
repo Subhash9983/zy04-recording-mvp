@@ -8,6 +8,7 @@ import {
   downloadDebugLog,
   downloadRecordingOriginal,
   downloadRecordingWav,
+  getAllAdminRecordings,
   getAdminRecordings,
   getAlerts,
   getCurrentAdmin,
@@ -281,6 +282,116 @@ function DevicesPage() {
       )}
     </>
   );
+}
+
+interface RecordingSessionGroup {
+  key: string;
+  deviceSn: string | null;
+  sessionId: string | null;
+  status: RecordingItem['status'];
+  items: RecordingItem[];
+  representative: RecordingItem;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const RECORDING_STATUS_PRIORITY: Record<RecordingItem['status'], number> = {
+  PROCESSING: 6,
+  PENDING_LZ4_CONFIRMATION: 5,
+  WAITING_SLICES: 4,
+  FAILED: 3,
+  READY: 2,
+  RECEIVED: 1
+};
+
+function groupRecordingSessions(items: RecordingItem[]): RecordingSessionGroup[] {
+  const groups = new Map<string, RecordingItem[]>();
+  for (const item of items) {
+    const key = item.device_sn && item.session_id
+      ? `${item.device_sn}\u0000${item.session_id}`
+      : `legacy\u0000${item.record_id}`;
+    groups.set(key, [...(groups.get(key) || []), item]);
+  }
+  return [...groups.entries()].map(([key, sessionItems]) => {
+    const sorted = [...sessionItems].sort((left, right) =>
+      (left.slice_number ?? Number.MAX_SAFE_INTEGER) - (right.slice_number ?? Number.MAX_SAFE_INTEGER)
+    );
+    const representative = sorted.find((item) => item.is_last_slice) || sorted[0];
+    const status = sorted.reduce((current, item) =>
+      RECORDING_STATUS_PRIORITY[item.status] > RECORDING_STATUS_PRIORITY[current] ? item.status : current,
+      sorted[0].status
+    );
+    const times = sorted.map((item) => new Date(item.created_at).getTime()).filter(Number.isFinite);
+    const updates = sorted.map((item) => new Date(item.updated_at || item.created_at).getTime()).filter(Number.isFinite);
+    return {
+      key,
+      deviceSn: representative.device_sn || null,
+      sessionId: representative.session_id || null,
+      status,
+      items: sorted,
+      representative,
+      createdAt: times.length ? new Date(Math.min(...times)).toISOString() : representative.created_at,
+      updatedAt: updates.length ? new Date(Math.max(...updates)).toISOString() : representative.updated_at || representative.created_at
+    };
+  }).sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
+}
+
+function recordingTone(status: RecordingItem['status']): string {
+  if (status === 'READY') return 'success';
+  if (status === 'FAILED') return 'danger';
+  if (status === 'WAITING_SLICES' || status === 'PENDING_LZ4_CONFIRMATION') return 'warning';
+  return 'neutral';
+}
+
+function canRetryRecordingSession(group: RecordingSessionGroup): boolean {
+  if (group.status !== 'FAILED' || group.items.some((item) => item.compress?.toLowerCase() === 'lz4')) return false;
+  const finalSlice = group.items.find((item) => item.is_last_slice)?.slice_number;
+  if (!finalSlice || finalSlice < 1) return false;
+  const slices = new Set(group.items.map((item) => item.slice_number).filter((value): value is number => typeof value === 'number'));
+  return Array.from({ length: finalSlice }, (_, index) => index + 1).every((slice) => slices.has(slice));
+}
+
+function RecordingsPage() {
+  const [recordings, setRecordings] = useState<RecordingItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try { setRecordings(await getAllAdminRecordings()); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to load recordings'); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+  const groups = useMemo(() => groupRecordingSessions(recordings), [recordings]);
+
+  const runAction = async (key: string, action: () => Promise<void>, successMessage: string) => {
+    setBusyAction(key);
+    setNotice(null);
+    try {
+      await action();
+      setNotice({ tone: 'success', message: successMessage });
+    } catch (reason) {
+      setNotice({ tone: 'error', message: reason instanceof Error ? reason.message : 'Recording action failed' });
+    } finally { setBusyAction(null); }
+  };
+
+  return <>
+    <PageHeader title="Recordings" description="All uploaded recordings, including sessions from badges not registered in the device catalog." action={<button className="secondary-button" onClick={() => void load()}>Refresh</button>} />
+    <ErrorBanner message={error} />
+    <ActionNotice notice={notice} />
+    {loading ? <LoadingBlock /> : groups.length === 0 ? <EmptyState title="No recordings" detail="Recording sessions will appear after the first badge slice is received." /> : <div className="table-card"><div className="table-scroll"><table><thead><tr><th>Device</th><th>Session</th><th>Status</th><th>Slices</th><th>Created / uploaded</th><th>Actions</th></tr></thead><tbody>{groups.map((group) => {
+      const item = group.representative;
+      const wavItem = group.items.find((slice) => slice.wav_available);
+      const originalItem = group.items.find((slice) => slice.original_available);
+      const retryEligible = canRetryRecordingSession(group);
+      return <tr key={group.key}><td>{group.deviceSn ? <a className="device-link" href={`#/devices/${encodeURIComponent(group.deviceSn)}`}>{group.deviceSn}</a> : <strong>Unregistered</strong>}<small>{group.deviceSn ? 'Recording source' : 'Legacy/orphan recording'}</small></td><td><code>{group.sessionId || 'No session ID'}</code><small>{item.file_name || item.record_id}</small></td><td><Pill tone={recordingTone(group.status)}>{group.status}</Pill>{item.missing_slices?.length ? <small>Missing {item.missing_slices.join(', ')}</small> : null}</td><td>{group.items.length}<small>{group.items.some((slice) => slice.is_last_slice) ? 'Final marker received' : 'Awaiting final marker'}</small></td><td>{formatTime(group.createdAt)}<small>Updated {formatTime(group.updatedAt)}</small></td><td><div className="row-actions">{group.status === 'READY' && wavItem && <button disabled={busyAction !== null} onClick={() => void runAction(`wav-${wavItem.record_id}`, () => downloadRecordingWav(wavItem.record_id), 'WAV download started and was added to the audit trail.')}>WAV</button>}{originalItem && <button disabled={busyAction !== null} onClick={() => void runAction(`original-${originalItem.record_id}`, () => downloadRecordingOriginal(originalItem.record_id, originalItem.file_name || `${originalItem.record_id}.opus`), 'Original-slice download started and was added to the audit trail.')}>Original slice</button>}{retryEligible && <button className="warning-button" disabled={busyAction !== null} onClick={() => { if (window.confirm(`Retry safe processing for session ${group.sessionId || item.record_id}?`)) void runAction(`retry-${item.record_id}`, async () => { await retryRecording(item.record_id); await load(); }, 'Processing retry completed and was recorded in the audit trail.'); }}>Retry</button>}</div></td></tr>;
+    })}</tbody></table></div></div>}
+  </>;
 }
 
 type DetailTab = 'Activity' | 'Recordings' | 'Status Logs' | 'Report Logs' | 'Debug Logs';
@@ -577,10 +688,11 @@ function Dashboard({ admin, route, onLogout }: { admin: AdminUser; route: string
   const detailMatch = route.match(/^\/devices\/(.+)$/);
   const page = detailMatch ? <DeviceDetailPage sn={decodeURIComponent(detailMatch[1])} />
     : route === '/devices' ? <DevicesPage />
-      : route === '/activity' ? <ActivityPage />
-        : route === '/alerts' ? <AlertsPage />
-          : route === '/configuration' ? <ConfigManagementPage />
-            : route === '/firmware' ? <FirmwareManagementPage />
+      : route === '/recordings' ? <RecordingsPage />
+        : route === '/activity' ? <ActivityPage />
+          : route === '/alerts' ? <AlertsPage />
+            : route === '/configuration' ? <ConfigManagementPage />
+              : route === '/firmware' ? <FirmwareManagementPage />
           : <OverviewPage />;
   const activeRoute = detailMatch ? '/devices' : route;
   return (
@@ -588,7 +700,7 @@ function Dashboard({ admin, route, onLogout }: { admin: AdminUser; route: string
       <aside className="sidebar">
         <div className="sidebar-brand"><div className="brand-mark small">Z4</div><div><strong>ZY04 Control</strong><span>Admin console</span></div></div>
         <nav aria-label="Primary navigation">
-          {[['/overview', 'Overview'], ['/devices', 'Devices'], ['/activity', 'API Activity'], ['/alerts', 'Alerts'], ['/configuration', 'Configuration'], ['/firmware', 'Firmware']].map(([path, label]) => <a className={activeRoute === path ? 'active' : ''} href={`#${path}`} key={path}><span className="nav-dot" />{label}</a>)}
+          {[['/overview', 'Overview'], ['/devices', 'Devices'], ['/recordings', 'Recordings'], ['/activity', 'API Activity'], ['/alerts', 'Alerts'], ['/configuration', 'Configuration'], ['/firmware', 'Firmware']].map(([path, label]) => <a className={activeRoute === path ? 'active' : ''} href={`#${path}`} key={path}><span className="nav-dot" />{label}</a>)}
         </nav>
         <div className="sidebar-account"><span>Signed in as</span><strong title={admin.email}>{admin.email}</strong><button onClick={onLogout}>Sign out</button></div>
       </aside>

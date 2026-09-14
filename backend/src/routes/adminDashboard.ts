@@ -296,14 +296,33 @@ export const adminDashboardRoutes: FastifyPluginAsync = async (fastify) => {
       const selection = [
         'record_id device_sn esp_version dsp_version session_id file_name serial slice_number',
         'is_last_slice create_time duration_ms audio_type channel sample_rate frame_size_ms',
-        'frame_rate sig_type compress status missing_slices created_at updated_at'
+        'frame_rate sig_type compress status missing_slices created_at updated_at',
+        'original_object_key original_file_path wav_object_key wav_file_path'
       ].join(' ');
-      const data = await listQuery(
+      const listed = await listQuery(
         Recording,
         filter,
         Recording.find(filter).select(selection).sort({ created_at: -1 }).skip(pagination.skip).limit(pagination.limit),
         pagination
       );
+      const data = {
+        ...listed,
+        items: listed.items.map((row) => {
+          const source = row as Record<string, unknown>;
+          const {
+            original_object_key: originalObjectKey,
+            original_file_path: originalFilePath,
+            wav_object_key: wavObjectKey,
+            wav_file_path: wavFilePath,
+            ...safe
+          } = source;
+          return {
+            ...safe,
+            original_available: Boolean(originalObjectKey || originalFilePath),
+            wav_available: Boolean(wavObjectKey || wavFilePath)
+          };
+        })
+      };
       return reply.send({ code: 0, data });
     } catch (error) {
       const response = handleAdminError(request, error);
