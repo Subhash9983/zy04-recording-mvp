@@ -12,7 +12,8 @@
 - Phase 6 commit: `0da3c08`
 - Phase 7 commit: `53175a1`
 - Phase 8 commit: `d753557`
-- Phase 9: the commit containing admin dashboard backend APIs and live activity
+- Phase 9 commit: `3b118d3`
+- Phase 10: the commit containing the admin dashboard overview UI
 
 ## Implemented endpoints
 
@@ -43,7 +44,7 @@
 - `GET /api/recordings/:id/audio`
 - `GET /health`
 
-No configuration creation, firmware file upload, frontend dashboard UI, or admin mutation APIs are implemented yet.
+No configuration creation, firmware file upload, frontend management actions, or admin mutation APIs are implemented yet.
 
 ## Important files
 
@@ -76,6 +77,10 @@ No configuration creation, firmware file upload, frontend dashboard UI, or admin
 - Supplier API activity model/30-day retention: `backend/src/models/ApiActivity.ts`
 - Sanitized activity tracking and live event publication: `backend/src/services/apiActivityService.ts`
 - Authenticated dashboard REST/SSE routes: `backend/src/routes/adminDashboard.ts`
+- Frontend admin shell, protected routing, overview/devices/activity/alerts pages: `frontend/src/App.tsx`
+- Credentialed admin API client and SSE URL: `frontend/src/api.ts`
+- Frontend admin API response contracts: `frontend/src/types.ts`
+- Responsive admin dashboard styling: `frontend/src/styles.css`
 - Recording storage abstraction and R2 configuration: `backend/src/services/storageService.ts`
 - Route registration: `backend/src/app.ts`
 
@@ -147,6 +152,11 @@ No configuration creation, firmware file upload, frontend dashboard UI, or admin
 - All Phase 9 dashboard REST endpoints and the SSE stream use `requireAdmin`; the intentionally public login route remains the only unauthenticated admin entry point.
 - Dashboard list endpoints use bounded pagination and explicit field selection; recording/debug responses omit local filesystem paths and storage object paths.
 - The authenticated SSE endpoint sends ready, heartbeat, and newly persisted activity events without polling MongoDB.
+- The frontend checks the 24-hour admin session before rendering protected content, redirects unauthenticated routes to login, and performs credentialed login/logout requests.
+- The responsive dashboard prioritizes active alerts, derives active/offline fleet state from a five-minute last-seen window, and provides overview, device, device-detail, live activity, and alert-history views.
+- Device details separate activity, recordings, status reports, general reports, and debug-log metadata into read-only tabs.
+- Live API activity provides all seven supplier endpoint tabs, connection state, bounded exponential reconnects, and a full sanitized request/response detail modal.
+- Frontend admin views consume only path-free API contract fields and expose no configuration, OTA, delete, or other management action.
 
 ## Phase 2 changed files
 
@@ -247,6 +257,16 @@ Backend and frontend production builds pass. Cryptographic and in-memory HTTP ch
 
 In-memory HTTP checks pass for authentication on every Phase 9 admin route, supplier routes remaining public, success/failure capture, response-code semantics, recursively sanitized request/response bodies, multipart binary omission, live SSE delivery, overview counts, and the exact 30-day TTL. Backend and frontend production builds pass. No MongoDB connection was made.
 
+## Phase 10 changed files
+
+- `frontend/src/App.tsx`
+- `frontend/src/api.ts`
+- `frontend/src/types.ts`
+- `frontend/src/styles.css`
+- `ZY04-IMPLEMENTATION-STATE.md`
+
+Frontend production build passes. Isolated API checks pass for credentialed login, session verification, logout, 401 handling, protected/login route redirects, and bounded SSE reconnect backoff. Static contract checks confirm empty states for devices, activity, recordings, status/report/debug logs, and active/resolved alerts, with no storage or filesystem path fields used by the frontend. Backend production build passes. No production database was contacted.
+
 ## Known blockers and risks
 
 - LZ4 framing is unconfirmed. Complete compressed sessions stop at `PENDING_LZ4_CONFIRMATION`; originals are preserved and no decompression/decoding is attempted.
@@ -258,4 +278,4 @@ In-memory HTTP checks pass for authentication on every Phase 9 admin route, supp
 
 ## Exact next phase
 
-Phase 10 scope awaits explicit instruction. Keep all future dashboard/data APIs behind `requireAdmin`, use `writeAuditLog` for admin mutations, and do not infer frontend UI, deployment, config creation, or firmware upload work.
+Phase 11 scope awaits explicit instruction. Keep all future admin APIs authenticated and audited, and do not infer deployment, configuration/OTA management actions, deletion, or other risky mutations.
