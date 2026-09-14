@@ -8,10 +8,23 @@ interface DeviceConfigRequestBody {
   version?: unknown;
 }
 
+interface DeviceConfigStatusRequestBody {
+  sn?: unknown;
+  session_id?: unknown;
+  status?: unknown;
+}
+
 export interface ValidDeviceConfigRequest {
   product: string;
   sn: string;
   version: string;
+}
+
+export interface ValidDeviceConfigStatusRequest {
+  sn: string;
+  sessionIds: Array<string | number>;
+  acknowledgementStatus: string;
+  succeeded: boolean;
 }
 
 export class DeviceConfigRequestError extends Error {
@@ -44,6 +57,41 @@ export function validateDeviceConfigRequest(body: unknown): ValidDeviceConfigReq
     product: requiredText(candidate.product, 'product', 128),
     sn: requiredText(candidate.sn, 'sn', 128),
     version: requiredText(candidate.version, 'version', 128)
+  };
+}
+
+export function validateDeviceConfigStatusRequest(body: unknown): ValidDeviceConfigStatusRequest {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    throw new DeviceConfigRequestError('JSON request body is required');
+  }
+  const candidate = body as DeviceConfigStatusRequestBody;
+  const sn = requiredText(candidate.sn, 'sn', 128);
+  const acknowledgementStatus = requiredText(candidate.status, 'status', 64);
+  const rawSessionId = candidate.session_id;
+  let sessionId: string | number;
+
+  if (typeof rawSessionId === 'number') {
+    if (!Number.isSafeInteger(rawSessionId) || rawSessionId < 0) {
+      throw new DeviceConfigRequestError('session_id must be a non-negative safe integer or string');
+    }
+    sessionId = rawSessionId;
+  } else {
+    sessionId = requiredText(rawSessionId, 'session_id', 128);
+  }
+
+  const sessionIds: Array<string | number> = [sessionId];
+  if (typeof sessionId === 'number') {
+    sessionIds.push(String(sessionId));
+  } else if (/^(0|[1-9]\d*)$/.test(sessionId)) {
+    const numericSessionId = Number(sessionId);
+    if (Number.isSafeInteger(numericSessionId)) sessionIds.push(numericSessionId);
+  }
+
+  return {
+    sn,
+    sessionIds,
+    acknowledgementStatus,
+    succeeded: acknowledgementStatus.toLowerCase() === 'success'
   };
 }
 
@@ -132,4 +180,54 @@ export const deviceConfigRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.status(500).send({ code: 500, msg: 'Failed to fetch device configuration' });
     }
   });
+
+  fastify.post<{ Body: DeviceConfigStatusRequestBody }>(
+    '/sca/device/config_status',
+    async (request, reply) => {
+      try {
+        const input = validateDeviceConfigStatusRequest(request.body);
+        const now = new Date();
+
+        await Device.updateOne(
+          { sn: input.sn },
+          { $set: { last_seen_at: now, updated_at: now } }
+        );
+
+        const identity = {
+          device_sn: input.sn,
+          session_id: { $in: input.sessionIds }
+        };
+        const transitionFilter = input.succeeded
+          ? { ...identity, status: { $ne: 'SUCCESS' } }
+          : { ...identity, status: { $in: ['PENDING', 'DELIVERED'] } };
+
+        const transitioned = await DeviceConfig.findOneAndUpdate(
+          transitionFilter,
+          {
+            $set: {
+              status: input.succeeded ? 'SUCCESS' : 'FAILED',
+              acknowledgement_status: input.acknowledgementStatus,
+              acknowledged_at: now,
+              completed_at: now,
+              updated_at: now
+            }
+          },
+          { new: true }
+        );
+
+        if (!transitioned) {
+          const existing = await DeviceConfig.exists(identity);
+          if (!existing) return reply.status(200).send({ code: 1 });
+        }
+
+        return reply.status(200).send({ code: 0 });
+      } catch (error) {
+        if (error instanceof DeviceConfigRequestError) {
+          return reply.status(400).send({ code: 400, msg: error.message });
+        }
+        request.log.error(error);
+        return reply.status(500).send({ code: 500, msg: 'Failed to acknowledge device configuration' });
+      }
+    }
+  );
 };

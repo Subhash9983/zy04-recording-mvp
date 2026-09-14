@@ -10,6 +10,9 @@ export interface IDeviceConfig extends Document {
   status: DeviceConfigStatus;
   delivery_attempts: number;
   last_delivery_at?: Date | null;
+  acknowledgement_status?: string | null;
+  acknowledged_at?: Date | null;
+  completed_at?: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -29,6 +32,9 @@ const DeviceConfigSchema = new Schema<IDeviceConfig>(
     },
     delivery_attempts: { type: Number, default: 0, min: 0 },
     last_delivery_at: { type: Date, default: null },
+    acknowledgement_status: { type: String, maxlength: 64, default: null },
+    acknowledged_at: { type: Date, default: null },
+    completed_at: { type: Date, default: null },
     created_at: { type: Date, default: Date.now },
     updated_at: { type: Date, default: Date.now }
   },

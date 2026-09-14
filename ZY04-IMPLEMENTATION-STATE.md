@@ -6,19 +6,21 @@
 - Phase 1 commit: `fa2e00d`
 - Phase 2 commit: `cc52296`
 - R2 storage phase commit: `dc813ba`
-- Phase 3: the commit containing the device configuration fetch foundation
+- Phase 3 commit: `22aa961`
+- Phase 4: the commit containing the configuration status acknowledgement
 
 ## Implemented endpoints
 
 - `POST /sca/recordupload`
 - `GET /sca/device/cloud_time`
 - `POST /sca/device/config`
+- `POST /sca/device/config_status`
 - `GET /api/recordings`
 - `GET /api/recordings/:id`
 - `GET /api/recordings/:id/audio`
 - `GET /health`
 
-No configuration creation/acknowledgement, OTA, log, authentication, or Admin Dashboard endpoints are implemented yet.
+No configuration creation, OTA, log, authentication, or Admin Dashboard endpoints are implemented yet.
 
 ## Important files
 
@@ -41,6 +43,7 @@ No configuration creation/acknowledgement, OTA, log, authentication, or Admin Da
 - R2 references: `original_object_key` and `wav_object_key`; local path fields remain nullable for development/legacy fallback.
 - `Device` has unique `sn` plus `product`, `model`, `version`, and `last_seen_at`.
 - `DeviceConfig` queues values by device/model with `PENDING`, `DELIVERED`, `SUCCESS`, or `FAILED` status, delivery attempts, and timestamps.
+- `DeviceConfig` acknowledgement metadata: bounded raw `acknowledgement_status`, `acknowledged_at`, and `completed_at`.
 - Device configuration queue index: `{ device_sn: 1, device_model: 1, status: 1, created_at: 1 }`; session identity is unique per device.
 - Existing unique `record_id` index remains.
 - New unique logical-slice index: `{ device_sn: 1, session_id: 1, serial: 1 }`.
@@ -69,6 +72,10 @@ No configuration creation/acknowledgement, OTA, log, authentication, or Admin Da
 - Configuration fetch validates `product`, `sn`, and `version`, upserts device metadata/last-seen, and atomically returns the oldest matching `PENDING` or `DELIVERED` config.
 - Fetch marks the config `DELIVERED`, increments attempts, protects reserved response keys, and keeps it eligible for redelivery until a later acknowledgement marks success.
 - No matching configuration returns exactly `{ "code": 1 }` with HTTP 200.
+- Configuration acknowledgement matches `device_sn + session_id`, supports numeric/string session identifiers, and updates device last-seen for every valid request.
+- `success` transitions a matching configuration to `SUCCESS`; other bounded statuses transition an eligible configuration to `FAILED` while preserving the raw acknowledgement.
+- Duplicate acknowledgements are idempotent, repeated failures do not rewrite completion timestamps, and a stale failure cannot downgrade `SUCCESS`.
+- Missing acknowledgement sessions return non-zero `code: 1` without exposing internal details.
 
 ## Phase 2 changed files
 
@@ -100,6 +107,14 @@ Backend and frontend production builds pass. Manual checks pass for transient lo
 
 Backend and frontend production builds pass. In-memory route checks pass for device upsert, oldest-first selection, `PENDING`/`DELIVERED` eligibility, attempt increments, flattened values, reserved-key protection, exact no-config response, and invalid-input rejection. No MongoDB connection was made.
 
+## Phase 4 changed files
+
+- `backend/src/models/DeviceConfig.ts`
+- `backend/src/routes/deviceConfig.ts`
+- `ZY04-IMPLEMENTATION-STATE.md`
+
+Focused in-memory checks pass for success, failure, missing session, duplicate success/failure, stale failure after success, numeric/string session matching, device last-seen updates, and invalid input. No MongoDB connection was made.
+
 ## Known blockers and risks
 
 - LZ4 framing is unconfirmed. Complete compressed sessions stop at `PENDING_LZ4_CONFIRMATION`; originals are preserved and no decompression/decoding is attempted.
@@ -107,8 +122,8 @@ Backend and frontend production builds pass. In-memory route checks pass for dev
 - The processing guard is reliable for the current single-process service, but there is no multi-instance lock or durable restart queue.
 - Render local storage is ephemeral; production must provide R2 configuration. Local fallback remains development/legacy-only.
 - R2 support for debug logs and OTA firmware is pending and was intentionally not implemented in this phase.
-- Configuration creation UI and `POST /sca/device/config_status` remain pending; delivered configurations intentionally continue to be redelivered.
+- Configuration creation UI remains pending. Delivered configurations are redelivered until a successful acknowledgement.
 
 ## Exact next phase
 
-Phase 4: implement Badge Configuration Acknowledgement (`POST /sca/device/config_status`) so `success` atomically removes a delivered configuration from fetch eligibility; do not add creation UI or unrelated APIs.
+Phase 5 scope awaits explicit instruction; do not infer configuration creation UI, OTA, logs, authentication, or dashboard work.
