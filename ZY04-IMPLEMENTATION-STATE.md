@@ -14,7 +14,8 @@
 - Phase 8 commit: `d753557`
 - Phase 9 commit: `3b118d3`
 - Phase 10 commit: `114a24e`
-- Phase 11: the commit containing dashboard management actions
+- Phase 11 commit: `7d6a9eb`
+- Phase 12 verified code baseline: `7d6a9eb`
 
 ## Implemented endpoints
 
@@ -311,7 +312,49 @@ Isolated backend checks pass for authentication on all new routes, unchanged pub
 - Render local storage is ephemeral; production must provide R2 configuration. Local fallback remains development/legacy-only.
 - Firmware binary upload/storage is pending; firmware management intentionally remains URL-based.
 - Delivered configurations continue to be redelivered until a successful badge acknowledgement.
+- No `render.yaml`, deployment workflow, or other repository-owned Render branch configuration exists. Feature-branch deployment safety cannot be established from this repository, so no deployment was attempted.
+- The production admin session cookie is `SameSite=Strict`. Render must use a same-site frontend/backend topology (or one origin) before deployment; separate cross-site origins require an explicitly reviewed cookie policy change.
+- Actual Render environment values and service branch settings were not accessible during local verification and must be provisioned/confirmed without exposing their values.
+
+## Phase 12 final verification (2026-09-14)
+
+- Git: verified branch `feature/zy04-device-management-admin-dashboard`, initially clean, and exactly equal to `origin/feature/zy04-device-management-admin-dashboard` at `7d6a9ebc9f3d6db9e0840e9b17c4e3870e05ddb6` after an explicit fetch.
+- Builds: backend `tsc` and frontend `tsc && vite build` pass.
+- Supplier contract suite: all seven documented routes returned their documented success shapes over Fastify injection; cloud time also had JSON/content-length headers and a current 13-digit timestamp. Multipart checks used in-memory files and mocked persistence/storage only.
+- Authentication boundary: all seven supplier routes succeeded without an admin session. The public login route remains the intentional exception under `/api/admin`; 23 session-protected admin data/action routes returned HTTP 401 with an invalid session.
+- Activity: all seven successful supplier requests and one failed request were retained with correct success classification; multipart bodies stored metadata and `[binary omitted]`, never bytes.
+- Storage/configuration: development/test local fallback passes; production without R2 and partial R2 configuration fail closed; complete syntactically valid R2 configuration selects R2 without making a network request. Production admin-auth configuration also fails closed when incomplete.
+- Health/alerts: pure checks cover low battery and storage threshold activation, both recovery observations, and recording-upload failure detection. `DeviceAlert` transitions preserve resolved history.
+- Recording safety: complete LZ4 input resolves to `PENDING_LZ4_CONFIRMATION`; no compressed decode was attempted. Complete uncompressed and missing-slice decisions resolve to `READY_TO_PROCESS` and `WAITING_SLICES`, respectively.
+- Data exposure/audit: frontend contracts contain no storage/path fields; recording/debug paths and object keys are used only internally for streams. Admin management mutations/downloads call the audit helper, and `AuditLog` remains append-only.
+- Retention: `ApiActivity.created_at` retains its exact 30-day TTL index.
+- Secret scan: tracked files contain no non-placeholder private keys, common cloud/source-control tokens, credential-bearing MongoDB URI, or tracked runtime `.env` file. The documentation contains one explicitly placeholder-form MongoDB URI only.
+- No MongoDB, R2, production filesystem, Render deployment, or merge was performed. The temporary verification script was removed.
+
+### Render deployment checklist
+
+Backend service:
+
+- Set `NODE_ENV=production`.
+- Set secret/database values: `MONGODB_URI` and `DATABASE_NAME`.
+- Set all required R2 values together: `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_BUCKET`; set `R2_PUBLIC_BASE_URL` only when a public base URL is intentionally configured.
+- Set admin values: `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and a strong `SESSION_SECRET` (minimum 32 characters). Never place their values in build logs or committed files.
+- Set `FRONTEND_URL` to the exact deployed frontend origin for credentialed CORS. Render supplies `PORT`; `HOST` defaults to `0.0.0.0`.
+- Do not use `UPLOAD_DIR` as production persistence. Production must use R2.
+- Suggested service commands with backend as root: build `npm ci && npm run build`; start `npm start`.
+
+Frontend service:
+
+- Set build-time `VITE_API_URL` to the exact deployed backend origin. `VITE_BACKEND_URL` controls the Vite development proxy only and does not configure the production bundle.
+- Suggested static-site commands with frontend as root: build `npm ci && npm run build`; publish `dist`.
+- Confirm the frontend/backend deployment topology is same-site for the current strict admin cookie before live login testing.
+
+Deployment gate:
+
+- Confirm in Render which Git branch each service tracks and whether preview/feature-branch services exist. No repository evidence proves feature-branch deployment is safe.
+- If services track only `main`, obtain explicit merge approval later; do not merge as part of Phase 12.
+- Provision and validate environment values in Render without printing them, then run health, supplier contract, admin login/session/SSE, R2 upload/download, and rollback smoke tests against a non-production branch service first.
 
 ## Exact next phase
 
-Phase 12 scope awaits explicit instruction. Keep all future admin APIs authenticated and mutations audited; do not infer deployment, physical file deletion, firmware binary upload, or supplier-contract changes.
+Obtain explicit deployment or merge approval, confirm Render branch services and same-site admin-auth topology, provision the checklist values, and run non-production live smoke tests. Supplier confirmation is still required for LZ4 framing and `opus-decoder-core` compatibility before enabling those recording paths.
