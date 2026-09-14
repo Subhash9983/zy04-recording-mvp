@@ -121,6 +121,16 @@ export class AudioService {
     throw new Error(`Opus decoding failed: ${reason}`);
   }
 
+  public async processBuffersToWav(
+    sliceBuffers: Buffer[],
+    options: AudioDecodeOptions
+  ): Promise<Buffer> {
+    if (options.compress) {
+      throw new Error('LZ4 recording cannot be decoded before supplier framing confirmation');
+    }
+    return this.decodeOpusToWav(Buffer.concat(sliceBuffers), options);
+  }
+
   /** Write a complete temporary WAV and atomically publish it only after decoding succeeds. */
   public async processAndSaveWav(
     slicePaths: string[],
@@ -132,7 +142,7 @@ export class AudioService {
     }
 
     const buffers = await Promise.all(slicePaths.map((slicePath) => fs.readFile(slicePath)));
-    const wavBuffer = await this.decodeOpusToWav(Buffer.concat(buffers), options);
+    const wavBuffer = await this.processBuffersToWav(buffers, options);
     const temporaryPath = `${destinationWavPath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
 
     await fs.mkdir(path.dirname(destinationWavPath), { recursive: true });

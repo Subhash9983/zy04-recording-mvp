@@ -1,11 +1,15 @@
-import fs from 'fs/promises';
-import fsSync from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { Recording, IRecording, RecordingStatus } from '../models/Recording.js';
 import { audioService } from './audioService.js';
 import { ParsedSerial, parseSerial } from '../utils/serial.js';
 import { config } from '../config.js';
+import {
+  recordingSliceObjectKey,
+  recordingWavObjectKey,
+  storageService,
+  StoredDownload
+} from './storageService.js';
 
 export interface SaveUploadPayload {
   sn: string;
@@ -159,43 +163,6 @@ export class RecordingService {
     );
   }
 
-  private async isUsableFile(filePath?: string | null): Promise<boolean> {
-    if (!filePath) return false;
-    try {
-      const stats = await fs.stat(filePath);
-      return stats.isFile() && stats.size > 0;
-    } catch {
-      return false;
-    }
-  }
-
-  private isUsableWav(filePath?: string | null): boolean {
-    if (!filePath) return false;
-    const uploadRoot = path.resolve(config.uploadDir);
-    const candidate = path.resolve(filePath);
-    if (!candidate.toLowerCase().startsWith(`${uploadRoot.toLowerCase()}${path.sep}`) ||
-        path.extname(candidate).toLowerCase() !== '.wav') {
-      return false;
-    }
-    try {
-      const stats = fsSync.statSync(candidate);
-      return stats.isFile() && stats.size > 44;
-    } catch {
-      return false;
-    }
-  }
-
-  private async writeSliceExclusively(filePath: string, fileBuffer: Buffer): Promise<void> {
-    try {
-      await fs.writeFile(filePath, fileBuffer, { flag: 'wx' });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST' && await this.isUsableFile(filePath)) {
-        return;
-      }
-      throw error;
-    }
-  }
-
   private scheduleSessionEvaluation(deviceSn: string, sessionId: string): void {
     setImmediate(() => {
       this.evaluateSessionForProcessing(deviceSn, sessionId).catch((error) => {
@@ -208,17 +175,33 @@ export class RecordingService {
     existing: IRecording,
     payload: SaveUploadPayload,
     parsed: ParsedSerial,
-    expectedFilePath: string
+    expectedFilePath: string,
+    expectedObjectKey: string
   ): Promise<{ record_id: string; recording: IRecording }> {
-    if (!await this.isUsableFile(existing.original_file_path)) {
-      await fs.mkdir(path.dirname(expectedFilePath), { recursive: true });
-      await this.writeSliceExclusively(expectedFilePath, payload.fileBuffer);
+    const existingIsUsable = await storageService.exists(
+      existing.original_object_key,
+      existing.original_file_path
+    );
+    const needsR2Migration = storageService.usesR2 && !existing.original_object_key;
+
+    if (!existingIsUsable || needsR2Migration) {
+      const sourceBuffer = existingIsUsable
+        ? await storageService.read(existing.original_object_key, existing.original_file_path)
+        : payload.fileBuffer;
+      const stored = await storageService.save(
+        expectedObjectKey,
+        expectedFilePath,
+        sourceBuffer,
+        'audio/opus'
+      );
       await Recording.updateOne(
         { _id: existing._id },
         {
           $set: {
-            original_file_path: expectedFilePath,
+            original_file_path: stored.localPath,
+            original_object_key: stored.objectKey,
             wav_file_path: null,
+            wav_object_key: null,
             status: 'RECEIVED',
             processing_error: null,
             missing_slices: [],
@@ -226,8 +209,10 @@ export class RecordingService {
           }
         }
       );
-      existing.original_file_path = expectedFilePath;
+      existing.original_file_path = stored.localPath;
+      existing.original_object_key = stored.objectKey;
       existing.wav_file_path = null;
+      existing.wav_object_key = null;
       existing.status = 'RECEIVED';
     }
 
@@ -250,13 +235,18 @@ export class RecordingService {
     };
     const folderPath = this.sessionFolder(payload.sn, payload.session_id);
     const sliceFilePath = path.join(folderPath, `${parsed.formattedHex.slice(2)}.opus`);
+    const sliceObjectKey = recordingSliceObjectKey(
+      payload.sn,
+      payload.session_id,
+      parsed.raw,
+      payload.file_name
+    );
 
     const existing = await Recording.findOne(identity);
     if (existing) {
-      return this.handleExistingSlice(existing, payload, parsed, sliceFilePath);
+      return this.handleExistingSlice(existing, payload, parsed, sliceFilePath, sliceObjectKey);
     }
 
-    await fs.mkdir(folderPath, { recursive: true });
     const recording = new Recording({
       record_id: this.generateRecordId(),
       device_sn: payload.sn,
@@ -277,9 +267,11 @@ export class RecordingService {
       frame_rate: Number(payload.frame_rate),
       sig_type: payload.sig_type,
       compress: payload.compress,
-      original_file_path: sliceFilePath,
+      original_file_path: storageService.usesR2 ? null : sliceFilePath,
+      original_object_key: storageService.usesR2 ? sliceObjectKey : null,
       decompressed_file_path: null,
       wav_file_path: null,
+      wav_object_key: null,
       status: 'RECEIVED',
       missing_slices: [],
       processing_error: null,
@@ -293,11 +285,11 @@ export class RecordingService {
       if (!isDuplicateKeyError(error)) throw error;
       const duplicate = await Recording.findOne(identity);
       if (!duplicate) throw error;
-      return this.handleExistingSlice(duplicate, payload, parsed, sliceFilePath);
+      return this.handleExistingSlice(duplicate, payload, parsed, sliceFilePath, sliceObjectKey);
     }
 
     try {
-      await this.writeSliceExclusively(sliceFilePath, payload.fileBuffer);
+      await storageService.save(sliceObjectKey, sliceFilePath, payload.fileBuffer, 'audio/opus');
     } catch (error) {
       await Recording.updateOne(
         { _id: recording._id },
@@ -306,6 +298,7 @@ export class RecordingService {
             status: 'FAILED',
             processing_error: 'Original slice could not be saved safely',
             wav_file_path: null,
+            wav_object_key: null,
             updated_at: new Date()
           }
         }
@@ -319,7 +312,9 @@ export class RecordingService {
 
   private sanitizeProcessingError(error: unknown): string {
     const message = error instanceof Error ? error.message : 'Unknown recording processing error';
-    return message
+    const sensitiveValues = [process.env.R2_ACCESS_KEY_ID, process.env.R2_SECRET_ACCESS_KEY]
+      .filter((value): value is string => Boolean(value));
+    return sensitiveValues.reduce((sanitized, value) => sanitized.replaceAll(value, '[credential]'), message)
       .replaceAll(config.uploadDir, '[upload-dir]')
       .replace(/[\r\n\t]+/g, ' ')
       .slice(0, 500);
@@ -339,14 +334,19 @@ export class RecordingService {
           missing_slices: decision.missingSlices,
           processing_error: decision.reason || null,
           wav_file_path: null,
+          wav_object_key: null,
           updated_at: new Date()
         }
       });
       return decision;
     }
 
-    const existingWav = slices.find((slice) => slice.wav_file_path)?.wav_file_path;
-    if (await this.isUsableFile(existingWav)) {
+    const existingWav = slices.find((slice) => slice.wav_object_key || slice.wav_file_path);
+    if (existingWav && await storageService.exists(
+      existingWav.wav_object_key,
+      existingWav.wav_file_path,
+      45
+    )) {
       return decision;
     }
 
@@ -372,6 +372,7 @@ export class RecordingService {
             missing_slices: [],
             processing_error: null,
             wav_file_path: null,
+            wav_object_key: null,
             updated_at: new Date()
           }
         },
@@ -385,6 +386,7 @@ export class RecordingService {
           missing_slices: [],
           processing_error: null,
           wav_file_path: null,
+          wav_object_key: null,
           updated_at: new Date()
         }
       });
@@ -395,27 +397,40 @@ export class RecordingService {
         return leftNumber - rightNumber;
       });
       const firstSlice = sortedSlices[0];
-      const wavDestination = path.join(this.sessionFolder(deviceSn, sessionId), 'recording.wav');
+      const wavDestination = path.join(this.sessionFolder(deviceSn, sessionId), `${claimed.record_id}.wav`);
+      const wavObjectKey = recordingWavObjectKey(deviceSn, sessionId, claimed.record_id);
 
       try {
-        await audioService.processAndSaveWav(
-          sortedSlices.map((slice) => slice.original_file_path),
-          wavDestination,
+        const sliceBuffers = await Promise.all(sortedSlices.map((slice) =>
+          storageService.read(slice.original_object_key, slice.original_file_path)
+        ));
+        const wavBuffer = await audioService.processBuffersToWav(
+          sliceBuffers,
           {
             sampleRate: firstSlice.sample_rate || 16000,
             channels: firstSlice.channel?.toUpperCase() === 'STEREO' ? 2 : 1,
             compress: null
           }
         );
+        const storedWav = await storageService.save(
+          wavObjectKey,
+          wavDestination,
+          wavBuffer,
+          'audio/wav'
+        );
+        if (!await storageService.exists(storedWav.objectKey, storedWav.localPath, 45)) {
+          throw new Error('Generated WAV could not be verified after storage');
+        }
 
         // A late concurrent upload must not let an obsolete slice set become READY.
         const currentSlices = await Recording.find(filter).sort({ slice_number: 1, created_at: 1 });
         const currentDecision = assessSessionSlices(currentSlices);
         if (currentDecision.kind !== 'READY_TO_PROCESS') {
-          await fs.unlink(wavDestination).catch(() => undefined);
+          await storageService.remove(storedWav.objectKey, storedWav.localPath);
           await Recording.updateMany(filter, {
             $set: {
               wav_file_path: null,
+              wav_object_key: null,
               status: currentDecision.kind === 'RECEIVED' ? 'WAITING_SLICES' : currentDecision.kind,
               missing_slices: currentDecision.missingSlices,
               processing_error: currentDecision.reason || 'Session changed while audio was processing',
@@ -427,7 +442,8 @@ export class RecordingService {
 
         await Recording.updateMany(filter, {
           $set: {
-            wav_file_path: wavDestination,
+            wav_file_path: storedWav.localPath,
+            wav_object_key: storedWav.objectKey,
             status: 'READY',
             processing_error: null,
             missing_slices: [],
@@ -438,6 +454,7 @@ export class RecordingService {
         await Recording.updateMany(filter, {
           $set: {
             wav_file_path: null,
+            wav_object_key: null,
             status: 'FAILED',
             processing_error: this.sanitizeProcessingError(error),
             updated_at: new Date()
@@ -466,6 +483,7 @@ export class RecordingService {
       sample_rate: number;
       slice_count: number;
       wav_file_path?: string | null;
+      wav_object_key?: string | null;
     }>();
 
     for (const slice of allSlices) {
@@ -484,7 +502,8 @@ export class RecordingService {
           channel: slice.channel,
           sample_rate: slice.sample_rate,
           slice_count: 1,
-          wav_file_path: slice.wav_file_path
+          wav_file_path: slice.wav_file_path,
+          wav_object_key: slice.wav_object_key
         });
         continue;
       }
@@ -492,6 +511,7 @@ export class RecordingService {
       existing.duration_ms += slice.duration_ms || 0;
       existing.slice_count += 1;
       if (slice.wav_file_path) existing.wav_file_path = slice.wav_file_path;
+      if (slice.wav_object_key) existing.wav_object_key = slice.wav_object_key;
       const priority: RecordingStatus[] = [
         'READY',
         'PROCESSING',
@@ -506,19 +526,28 @@ export class RecordingService {
     }
 
     const sessions = Array.from(sessionMap.values());
-    for (const session of sessions) {
+    await Promise.all(sessions.map(async (session) => {
       if (session.status === 'READY' &&
-          !this.isUsableWav(session.wav_file_path)) {
+          !await storageService.exists(session.wav_object_key, session.wav_file_path, 45)) {
         session.status = 'FAILED';
         session.wav_file_path = null;
+        session.wav_object_key = null;
       }
-    }
+    }));
     return sessions;
   }
 
   /** Public recording IDs remain supported; ambiguous session-only lookup is removed. */
   public async getRecordingById(recordId: string) {
     return Recording.findOne({ record_id: recordId }).lean();
+  }
+
+  public async isWavAvailable(recording: Pick<IRecording, 'wav_object_key' | 'wav_file_path'>): Promise<boolean> {
+    return storageService.exists(recording.wav_object_key, recording.wav_file_path, 45);
+  }
+
+  public async openWav(recording: Pick<IRecording, 'wav_object_key' | 'wav_file_path'>): Promise<StoredDownload> {
+    return storageService.openDownload(recording.wav_object_key, recording.wav_file_path);
   }
 }
 

@@ -28,9 +28,11 @@ export interface IRecording extends Document {
   frame_rate: number;
   sig_type: string;
   compress?: string | null;
-  original_file_path: string;
+  original_file_path?: string | null;
+  original_object_key?: string | null;
   decompressed_file_path?: string | null;
   wav_file_path?: string | null;
+  wav_object_key?: string | null;
   status: RecordingStatus;
   missing_slices: number[];
   processing_error?: string | null;
@@ -60,9 +62,11 @@ const RecordingSchema: Schema = new Schema<IRecording>(
     frame_rate: { type: Number, default: 8 },
     sig_type: { type: String, default: '2' },
     compress: { type: String, default: null },
-    original_file_path: { type: String, required: true },
+    original_file_path: { type: String, default: null },
+    original_object_key: { type: String, default: null },
     decompressed_file_path: { type: String, default: null },
     wav_file_path: { type: String, default: null },
+    wav_object_key: { type: String, default: null },
     status: {
       type: String,
       enum: [

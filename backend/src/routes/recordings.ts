@@ -1,24 +1,5 @@
 import { FastifyPluginAsync } from 'fastify';
-import fs from 'fs';
-import path from 'path';
-import { config } from '../config.js';
 import { recordingService } from '../services/recordingService.js';
-
-function resolvePlayableWav(wavPath?: string | null): { path: string; size: number } | null {
-  if (!wavPath) return null;
-  const uploadRoot = path.resolve(config.uploadDir);
-  const filePath = path.resolve(wavPath);
-  const comparableRoot = `${uploadRoot.toLowerCase()}${path.sep}`;
-  if (!filePath.toLowerCase().startsWith(comparableRoot) || path.extname(filePath).toLowerCase() !== '.wav') {
-    return null;
-  }
-  try {
-    const stats = fs.statSync(filePath);
-    return stats.isFile() && stats.size > 44 ? { path: filePath, size: stats.size } : null;
-  } catch {
-    return null;
-  }
-}
 
 export const recordingRoutes: FastifyPluginAsync = async (fastify) => {
   // List all recordings
@@ -53,7 +34,7 @@ export const recordingRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({ error: 'Recording not found' });
       }
       const wavAvailable = recording.status === 'READY' &&
-        resolvePlayableWav(recording.wav_file_path) !== null;
+        await recordingService.isWavAvailable(recording);
 
       return reply.send({
         data: {
@@ -100,27 +81,20 @@ export const recordingRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(409).send({ error: 'Decoded audio is not ready' });
       }
 
-      const playableWav = resolvePlayableWav(recording.wav_file_path);
-      if (!playableWav && recording.wav_file_path) {
-        const candidate = path.resolve(recording.wav_file_path);
-        const uploadRoot = path.resolve(config.uploadDir);
-        if (!candidate.toLowerCase().startsWith(`${uploadRoot.toLowerCase()}${path.sep}`)) {
-          request.log.warn({ record_id: recording.record_id }, 'Rejected unsafe WAV path');
-        }
-      }
-      if (!playableWav) {
-        if (!recording.wav_file_path) {
+      const wavAvailable = await recordingService.isWavAvailable(recording);
+      if (!wavAvailable) {
+        if (!recording.wav_object_key && !recording.wav_file_path) {
           return reply.status(404).send({ error: 'Decoded WAV is missing from storage' });
         }
         return reply.status(404).send({ error: 'Decoded WAV is unavailable' });
       }
 
-      reply.header('Content-Type', 'audio/wav');
-      reply.header('Content-Length', playableWav.size);
-      reply.header('Accept-Ranges', 'bytes');
+      const playableWav = await recordingService.openWav(recording);
 
-      const stream = fs.createReadStream(playableWav.path);
-      return reply.send(stream);
+      reply.header('Content-Type', 'audio/wav');
+      reply.header('Content-Length', playableWav.contentLength);
+      reply.header('Accept-Ranges', 'bytes');
+      return reply.send(playableWav.stream);
     } catch (error) {
       request.log.error(error);
       return reply.status(500).send({ error: 'Failed to stream audio file' });
