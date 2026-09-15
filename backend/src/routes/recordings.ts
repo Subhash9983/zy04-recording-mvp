@@ -1,5 +1,4 @@
 import { FastifyPluginAsync } from 'fastify';
-import fs from 'fs';
 import { recordingService } from '../services/recordingService.js';
 
 export const recordingRoutes: FastifyPluginAsync = async (fastify) => {
@@ -34,7 +33,36 @@ export const recordingRoutes: FastifyPluginAsync = async (fastify) => {
       if (!recording) {
         return reply.status(404).send({ error: 'Recording not found' });
       }
-      return reply.send({ data: recording });
+      const wavAvailable = recording.status === 'READY' &&
+        await recordingService.isWavAvailable(recording);
+
+      return reply.send({
+        data: {
+          record_id: recording.record_id,
+          device_sn: recording.device_sn,
+          esp_version: recording.esp_version,
+          dsp_version: recording.dsp_version,
+          mac: recording.mac,
+          session_id: recording.session_id,
+          file_name: recording.file_name,
+          serial: recording.serial,
+          slice_number: recording.slice_number,
+          is_last_slice: recording.is_last_slice,
+          create_time: recording.create_time,
+          duration_ms: recording.duration_ms,
+          audio_type: recording.audio_type,
+          channel: recording.channel,
+          sample_rate: recording.sample_rate,
+          frame_size_ms: recording.frame_size_ms,
+          frame_rate: recording.frame_rate,
+          sig_type: recording.sig_type,
+          compress: recording.compress,
+          status: wavAvailable ? recording.status : recording.status === 'READY' ? 'FAILED' : recording.status,
+          missing_slices: recording.missing_slices || [],
+          created_at: recording.created_at,
+          updated_at: recording.updated_at
+        }
+      });
     } catch (error) {
       request.log.error(error);
       return reply.status(500).send({ error: 'Failed to fetch recording details' });
@@ -49,17 +77,24 @@ export const recordingRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({ error: 'Recording not found' });
       }
 
-      const filePath = recording.wav_file_path || recording.original_file_path;
-      if (!filePath || !fs.existsSync(filePath)) {
-        return reply.status(404).send({ error: 'Audio file not found on disk' });
+      if (recording.status !== 'READY') {
+        return reply.status(409).send({ error: 'Decoded audio is not ready' });
       }
 
-      const isWav = filePath.endsWith('.wav');
-      reply.header('Content-Type', isWav ? 'audio/wav' : 'audio/ogg');
-      reply.header('Accept-Ranges', 'bytes');
+      const wavAvailable = await recordingService.isWavAvailable(recording);
+      if (!wavAvailable) {
+        if (!recording.wav_object_key && !recording.wav_file_path) {
+          return reply.status(404).send({ error: 'Decoded WAV is missing from storage' });
+        }
+        return reply.status(404).send({ error: 'Decoded WAV is unavailable' });
+      }
 
-      const stream = fs.createReadStream(filePath);
-      return reply.send(stream);
+      const playableWav = await recordingService.openWav(recording);
+
+      reply.header('Content-Type', 'audio/wav');
+      reply.header('Content-Length', playableWav.contentLength);
+      reply.header('Accept-Ranges', 'bytes');
+      return reply.send(playableWav.stream);
     } catch (error) {
       request.log.error(error);
       return reply.status(500).send({ error: 'Failed to stream audio file' });

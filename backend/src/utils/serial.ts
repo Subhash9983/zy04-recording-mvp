@@ -1,43 +1,48 @@
+export const UINT32_MAX = 0xffffffff;
+
 export interface ParsedSerial {
   raw: string;
   value: number;
-  sliceIndex: number;
+  sliceNumber: number;
+  highBits: number;
   isLastSlice: boolean;
   formattedHex: string;
 }
 
-/**
- * Parses the supplier serial field.
- * Low 16 bits represent the slice sequence number (1-based).
- * High 16 bits contain flags (0x0001 indicates last/end slice).
- */
-export function parseSerial(serialInput: string | number): ParsedSerial {
-  const rawStr = String(serialInput).trim();
-  let num: number;
+export class SerialValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SerialValidationError';
+  }
+}
 
-  if (rawStr.startsWith('0x') || rawStr.startsWith('0X')) {
-    num = parseInt(rawStr, 16);
-  } else if (/^[0-9a-fA-F]{8}$/.test(rawStr)) {
-    num = parseInt(rawStr, 16);
-  } else {
-    num = parseInt(rawStr, 10);
+/** Parse the supplier serial field as a strict decimal uint32 string. */
+export function parseSerial(serialInput: string): ParsedSerial {
+  const raw = serialInput.trim();
+
+  if (!/^\d+$/.test(raw)) {
+    throw new SerialValidationError('serial must be a decimal uint32 string');
   }
 
-  if (isNaN(num)) {
-    num = 1;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 0 || value > UINT32_MAX) {
+    throw new SerialValidationError('serial must be between 0 and 4294967295');
   }
 
-  const sliceIndex = num & 0xffff;
-  const highBits = (num >>> 16) & 0xffff;
-  const isLastSlice = (highBits & 0x0001) === 1 || highBits > 0;
+  const sliceNumber = value & 0xffff;
+  if (sliceNumber === 0) {
+    throw new SerialValidationError('serial slice number must start from 1');
+  }
 
-  const formattedHex = '0x' + num.toString(16).padStart(8, '0');
+  const highBits = value >>> 16;
+  const isLastSlice = ((highBits >>> 0) & 0x0001) === 1;
 
   return {
-    raw: rawStr,
-    value: num,
-    sliceIndex,
+    raw,
+    value,
+    sliceNumber,
+    highBits,
     isLastSlice,
-    formattedHex
+    formattedHex: `0x${value.toString(16).padStart(8, '0')}`
   };
 }
