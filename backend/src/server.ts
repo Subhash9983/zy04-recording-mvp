@@ -1,7 +1,10 @@
 import { buildApp } from './app.js';
 import { connectToDatabase, disconnectDatabase } from './db.js';
 import { config } from './config.js';
-import { safeAdminAuthEnvironmentDiagnostics } from './services/adminAuthService.js';
+import {
+  adminAuthService,
+  safeAdminAuthEnvironmentDiagnostics
+} from './services/adminAuthService.js';
 
 async function start() {
   try {
@@ -11,6 +14,11 @@ async function start() {
     );
     console.log('[Server] Connecting to database...');
     await connectToDatabase();
+    const adminCredentialSynced =
+      await adminAuthService.syncConfiguredAdminPasswordIfEnabled();
+    if (adminCredentialSynced) {
+      console.info('[AdminAuth] Admin credential synced');
+    }
 
     const app = await buildApp();
 

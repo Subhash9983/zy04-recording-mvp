@@ -9,13 +9,14 @@ export const ADMIN_SESSION_COOKIE = 'zy04_admin_session';
 type AuthEnvironment = Record<string, string | undefined>;
 
 export type AdminAuthConfiguration =
-  | { enabled: false; secureCookie: false }
+  | { enabled: false; secureCookie: false; syncPasswordOnStart: false }
   | {
       enabled: true;
       email: string;
       initialPassword: string;
       sessionSecret: string;
       secureCookie: boolean;
+      syncPasswordOnStart: boolean;
     };
 
 export interface AuthenticatedAdmin {
@@ -114,7 +115,9 @@ export function resolveAdminAuthConfiguration(env: AuthEnvironment): AdminAuthCo
   const configured = names.filter(hasValue).length;
   const production = env.NODE_ENV?.trim().toLowerCase() === 'production';
 
-  if (configured === 0 && !production) return { enabled: false, secureCookie: false };
+  if (configured === 0 && !production) {
+    return { enabled: false, secureCookie: false, syncPasswordOnStart: false };
+  }
   const missing = names.filter((name) => !hasValue(name));
   if (missing.length) {
     throw new AdminAuthConfigurationError(`Incomplete admin authentication configuration; missing: ${missing.join(', ')}`);
@@ -135,7 +138,9 @@ export function resolveAdminAuthConfiguration(env: AuthEnvironment): AdminAuthCo
     email,
     initialPassword: values.ADMIN_PASSWORD,
     sessionSecret: values.SESSION_SECRET,
-    secureCookie: production
+    secureCookie: production,
+    syncPasswordOnStart:
+      env.ADMIN_SYNC_PASSWORD_ON_START?.trim().toLowerCase() === 'true'
   };
 }
 
@@ -209,6 +214,56 @@ export class AdminAuthService {
       if (!concurrent) throw error;
       return concurrent;
     }
+  }
+
+  public async syncConfiguredAdminPasswordIfEnabled(): Promise<boolean> {
+    if (!this.configuration.enabled || !this.configuration.syncPasswordOnStart) {
+      return false;
+    }
+
+    const configuration = this.configuration;
+    const passwordHash = await hashAdminPassword(configuration.initialPassword);
+    const now = new Date();
+    const updates = {
+      admin_key: 'PRIMARY',
+      email: configuration.email,
+      password_hash: passwordHash,
+      enabled: true,
+      updated_at: now
+    };
+
+    const primaryAdmin = await Admin.findOne({ admin_key: 'PRIMARY' }).select('+password_hash');
+    const configuredEmailAdmin = primaryAdmin
+      ? null
+      : await Admin.findOne({ email: configuration.email }).select('+password_hash');
+    const existingAdmin = primaryAdmin ?? configuredEmailAdmin;
+
+    if (existingAdmin) {
+      await Admin.updateOne(
+        { _id: existingAdmin._id },
+        { $set: updates },
+        { runValidators: true }
+      );
+      return true;
+    }
+
+    try {
+      await Admin.create({
+        ...updates,
+        created_at: now
+      });
+    } catch (error) {
+      if (!isDuplicateKeyError(error)) throw error;
+      const concurrent = await Admin.findOne({ admin_key: 'PRIMARY' }).select('+password_hash');
+      if (!concurrent) throw error;
+      await Admin.updateOne(
+        { _id: concurrent._id },
+        { $set: updates },
+        { runValidators: true }
+      );
+    }
+
+    return true;
   }
 
   private signToken(token: string): string {

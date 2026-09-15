@@ -3,6 +3,7 @@
 ## Repository
 
 - Branch: `main`
+- Latest commit before admin password sync: `79e2526`
 - Main dashboard merge commit: `2ef02af`
 - Same-origin dashboard serving commit: `4750fd5`
 - Phase 1 commit: `fa2e00d`
@@ -343,6 +344,17 @@ The Render-style backend build and standalone frontend build pass. A compiled ba
 
 An isolated failure check confirms exactly five approved startup fields and five approved login-failure fields, with no raw email, password, or session-secret value in application or audit diagnostic payloads. Backend/frontend production builds pass; supplier APIs are unchanged.
 
+## Opt-in admin password synchronization changed files
+
+- `backend/.env.example`
+- `backend/src/server.ts`
+- `backend/src/services/adminAuthService.ts`
+- `ZY04-IMPLEMENTATION-STATE.md`
+
+`ADMIN_SYNC_PASSWORD_ON_START=true` now explicitly opts a startup into synchronizing the single primary admin with the configured `ADMIN_EMAIL` and a fresh secure hash of `ADMIN_PASSWORD`. The startup finds the primary admin (or the configured-email admin), creates it when missing, and keeps it enabled. The flag defaults to disabled and values other than case-insensitive `true` do not trigger a write. The only success log is the fixed message `Admin credential synced`; it includes no credential values.
+
+An isolated in-memory persistence check proves an existing old hash is replaced, the old password stops matching, login succeeds with the newly configured password, a missing admin is created, and a disabled flag performs no database write. Backend/frontend production builds pass, all seven supplier routes remain registered, no production database was contacted, and the temporary verification file was removed.
+
 ## Known blockers and risks
 
 - LZ4 framing is unconfirmed. Complete compressed sessions stop at `PENDING_LZ4_CONFIRMATION`; originals are preserved and no decompression/decoding is attempted.
@@ -396,4 +408,4 @@ Deployment gate:
 
 ## Exact next phase
 
-After the safe login diagnostics reach Render, make one failed login attempt and inspect `Admin login rejected`: email match plus submitted/configured lengths identify an env-input mismatch without revealing values. If all safe fields match but login remains rejected, the persisted `PRIMARY` admin identity/hash is stale and requires an explicitly authorized credential-rotation path. Supplier confirmation is still required for LZ4 framing and `opus-decoder-core` compatibility before enabling those recording paths.
+Set `ADMIN_SYNC_PASSWORD_ON_START=true` in Render for one deploy, verify the fixed `Admin credential synced` startup message and a successful login, then set the flag back to `false` and redeploy so future restarts make no credential writes. Supplier confirmation is still required for LZ4 framing and `opus-decoder-core` compatibility before enabling those recording paths.
