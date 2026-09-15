@@ -408,7 +408,7 @@ Deployment gate:
 
 ## Record-upload frame-size compatibility
 
-The recording upload endpoint accepts an omitted `frame_size_ms` and applies the documented fixed value `20`. Explicit values other than `20` remain invalid. This preserves the fixed decoder metadata while supporting supplier/test requests that omit the otherwise constant field. An isolated multipart check without `frame_size_ms` returned HTTP 200, `code: 0`, a record ID, and `Content-Length`; persistence was mocked and no production database or storage was touched. Backend and frontend production builds pass.
+The recording upload endpoint accepts omitted fixed metadata fields `frame_size_ms`, `frame_rate`, and `sig_type`, applying their documented values `20`, `8`, and `2`. Explicit values other than those constants remain invalid. This preserves fixed decoder metadata while supporting supplier/test requests that omit the fields. Isolated multipart checks returned HTTP 200, `code: 0`, a record ID, and `Content-Length`; persistence was mocked and no production database or storage was touched. Backend and frontend production builds pass.
 
 ## Exact next phase
 

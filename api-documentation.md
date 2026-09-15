@@ -458,8 +458,8 @@ Uploads a recording slice from the badge.
 | `channel` | string | Audio channel layout: `STEREO` |
 | `sample_rate` | string | Audio sample rate: `16000` Hz |
 | `frame_size_ms` | string | Frame size: `20` milliseconds. For compatibility, the server defaults this field to `20` when omitted. |
-| `frame_rate` | string | Frame rate: `8` |
-| `sig_type` | string | Signal type: `2` |
+| `frame_rate` | string | Frame rate: `8`. For compatibility, the server defaults this field to `8` when omitted. |
+| `sig_type` | string | Signal type: `2`. For compatibility, the server defaults this field to `2` when omitted. |
 | `compress` | string | Set to `lz4` for a compressed upload. Omit this field for an uncompressed upload. |
 | `record_file` | file | Recording slice file |
 | `serial` | string | Unsigned 32-bit recording-slice sequence value. The high 16 bits contain flags and the low 16 bits contain the slice number. |

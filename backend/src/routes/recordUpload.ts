@@ -15,8 +15,6 @@ const REQUIRED_FIELDS = [
   'audio_type',
   'channel',
   'sample_rate',
-  'frame_rate',
-  'sig_type',
   'serial'
 ] as const;
 
@@ -74,9 +72,11 @@ function validateFields(fields: Record<string, string>, fileBuffer: Buffer): Sav
   if (channel !== 'STEREO') throw new UploadRequestError('channel must be STEREO');
   if (fields.sample_rate.trim() !== '16000') throw new UploadRequestError('sample_rate must be 16000');
   const frameSizeMs = fields.frame_size_ms?.trim() || '20';
+  const frameRate = fields.frame_rate?.trim() || '8';
+  const signalType = fields.sig_type?.trim() || '2';
   if (frameSizeMs !== '20') throw new UploadRequestError('frame_size_ms must be 20');
-  if (fields.frame_rate.trim() !== '8') throw new UploadRequestError('frame_rate must be 8');
-  if (fields.sig_type.trim() !== '2') throw new UploadRequestError('sig_type must be 2');
+  if (frameRate !== '8') throw new UploadRequestError('frame_rate must be 8');
+  if (signalType !== '2') throw new UploadRequestError('sig_type must be 2');
 
   let compress: 'lz4' | null = null;
   if (Object.prototype.hasOwnProperty.call(fields, 'compress')) {
