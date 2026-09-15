@@ -410,6 +410,8 @@ Deployment gate:
 
 The recording upload endpoint accepts omitted fixed metadata fields `frame_size_ms`, `frame_rate`, and `sig_type`, applying their documented values `20`, `8`, and `2`. Explicit values other than those constants remain invalid. This preserves fixed decoder metadata while supporting supplier/test requests that omit the fields. Isolated multipart checks returned HTTP 200, `code: 0`, a record ID, and `Content-Length`; persistence was mocked and no production database or storage was touched. Backend and frontend production builds pass.
 
+For supplier interface-tester compatibility, an exactly-one-file LZ4 multipart upload may contain a zero-byte placeholder. It is still preserved as an original slice and remains subject to normal serial/grouping/idempotency rules; it is never decoded or marked `READY`. Zero-byte uncompressed uploads remain invalid.
+
 ## Exact next phase
 
 Deploy `main` through the existing Render workflow and rerun the supplier recording-upload test. Separately, set `ADMIN_SYNC_PASSWORD_ON_START=true` for one deploy if the admin credential has not yet been synchronized, verify login, then return the flag to `false`. Supplier confirmation is still required for LZ4 framing and `opus-decoder-core` compatibility before enabling those recording paths.

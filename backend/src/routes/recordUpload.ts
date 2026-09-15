@@ -48,7 +48,17 @@ function validateFields(fields: Record<string, string>, fileBuffer: Buffer): Sav
   for (const name of REQUIRED_FIELDS) {
     if (!fields[name]?.trim()) throw new UploadRequestError(`Missing required field: ${name}`);
   }
-  if (fileBuffer.length === 0) throw new UploadRequestError('record_file must not be empty');
+
+  let compress: 'lz4' | null = null;
+  if (Object.prototype.hasOwnProperty.call(fields, 'compress')) {
+    if (fields.compress.trim().toLowerCase() !== 'lz4') {
+      throw new UploadRequestError('compress must be omitted or lz4');
+    }
+    compress = 'lz4';
+  }
+  if (fileBuffer.length === 0 && compress !== 'lz4') {
+    throw new UploadRequestError('record_file must not be empty');
+  }
 
   const sn = boundedField(fields, 'sn', 128);
   const sessionId = boundedField(fields, 'session_id', 128);
@@ -77,14 +87,6 @@ function validateFields(fields: Record<string, string>, fileBuffer: Buffer): Sav
   if (frameSizeMs !== '20') throw new UploadRequestError('frame_size_ms must be 20');
   if (frameRate !== '8') throw new UploadRequestError('frame_rate must be 8');
   if (signalType !== '2') throw new UploadRequestError('sig_type must be 2');
-
-  let compress: 'lz4' | null = null;
-  if (Object.prototype.hasOwnProperty.call(fields, 'compress')) {
-    if (fields.compress.trim().toLowerCase() !== 'lz4') {
-      throw new UploadRequestError('compress must be omitted or lz4');
-    }
-    compress = 'lz4';
-  }
 
   try {
     parseSerial(fields.serial);
