@@ -457,7 +457,7 @@ Uploads a recording slice from the badge.
 | `audio_type` | string | Audio type: `OPUS` |
 | `channel` | string | Audio channel layout: `STEREO` |
 | `sample_rate` | string | Audio sample rate: `16000` Hz |
-| `frame_size_ms` | string | Frame size: `20` milliseconds |
+| `frame_size_ms` | string | Frame size: `20` milliseconds. For compatibility, the server defaults this field to `20` when omitted. |
 | `frame_rate` | string | Frame rate: `8` |
 | `sig_type` | string | Signal type: `2` |
 | `compress` | string | Set to `lz4` for a compressed upload. Omit this field for an uncompressed upload. |

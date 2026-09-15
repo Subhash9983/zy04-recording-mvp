@@ -406,6 +406,10 @@ Deployment gate:
 - If services track only `main`, obtain explicit merge approval later; do not merge as part of Phase 12.
 - Provision and validate environment values in Render without printing them, then run health, supplier contract, admin login/session/SSE, R2 upload/download, and rollback smoke tests against a non-production branch service first.
 
+## Record-upload frame-size compatibility
+
+The recording upload endpoint accepts an omitted `frame_size_ms` and applies the documented fixed value `20`. Explicit values other than `20` remain invalid. This preserves the fixed decoder metadata while supporting supplier/test requests that omit the otherwise constant field. An isolated multipart check without `frame_size_ms` returned HTTP 200, `code: 0`, a record ID, and `Content-Length`; persistence was mocked and no production database or storage was touched. Backend and frontend production builds pass.
+
 ## Exact next phase
 
-Set `ADMIN_SYNC_PASSWORD_ON_START=true` in Render for one deploy, verify the fixed `Admin credential synced` startup message and a successful login, then set the flag back to `false` and redeploy so future restarts make no credential writes. Supplier confirmation is still required for LZ4 framing and `opus-decoder-core` compatibility before enabling those recording paths.
+Deploy `main` through the existing Render workflow and rerun the supplier recording-upload test. Separately, set `ADMIN_SYNC_PASSWORD_ON_START=true` for one deploy if the admin credential has not yet been synchronized, verify login, then return the flag to `false`. Supplier confirmation is still required for LZ4 framing and `opus-decoder-core` compatibility before enabling those recording paths.

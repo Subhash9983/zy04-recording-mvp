@@ -15,7 +15,6 @@ const REQUIRED_FIELDS = [
   'audio_type',
   'channel',
   'sample_rate',
-  'frame_size_ms',
   'frame_rate',
   'sig_type',
   'serial'
@@ -74,7 +73,8 @@ function validateFields(fields: Record<string, string>, fileBuffer: Buffer): Sav
   if (audioType !== 'OPUS') throw new UploadRequestError('audio_type must be OPUS');
   if (channel !== 'STEREO') throw new UploadRequestError('channel must be STEREO');
   if (fields.sample_rate.trim() !== '16000') throw new UploadRequestError('sample_rate must be 16000');
-  if (fields.frame_size_ms.trim() !== '20') throw new UploadRequestError('frame_size_ms must be 20');
+  const frameSizeMs = fields.frame_size_ms?.trim() || '20';
+  if (frameSizeMs !== '20') throw new UploadRequestError('frame_size_ms must be 20');
   if (fields.frame_rate.trim() !== '8') throw new UploadRequestError('frame_rate must be 8');
   if (fields.sig_type.trim() !== '2') throw new UploadRequestError('sig_type must be 2');
 
