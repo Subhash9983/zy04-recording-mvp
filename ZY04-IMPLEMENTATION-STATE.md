@@ -412,6 +412,10 @@ The recording upload endpoint accepts omitted fixed metadata fields `frame_size_
 
 For supplier interface-tester compatibility, an exactly-one-file LZ4 multipart upload may contain a zero-byte placeholder. It is still preserved as an original slice and remains subject to normal serial/grouping/idempotency rules; it is never decoded or marked `READY`. Zero-byte uncompressed uploads remain invalid.
 
+## Config-status supplier response compatibility
+
+Valid `POST /sca/device/config_status` acknowledgements always return the documented HTTP 200 `{ "code": 0 }` response. Matching configurations still transition safely, while duplicate or unknown session acknowledgements are idempotent no-ops and cannot corrupt existing configuration state. Invalid request payloads remain rejected.
+
 ## Exact next phase
 
 Deploy `main` through the existing Render workflow and rerun the supplier recording-upload test. Separately, set `ADMIN_SYNC_PASSWORD_ON_START=true` for one deploy if the admin credential has not yet been synchronized, verify login, then return the flag to `false`. Supplier confirmation is still required for LZ4 framing and `opus-decoder-core` compatibility before enabling those recording paths.

@@ -201,7 +201,7 @@ export const deviceConfigRoutes: FastifyPluginAsync = async (fastify) => {
           ? { ...identity, status: { $ne: 'SUCCESS' } }
           : { ...identity, status: { $in: ['PENDING', 'DELIVERED'] } };
 
-        const transitioned = await DeviceConfig.findOneAndUpdate(
+        await DeviceConfig.findOneAndUpdate(
           transitionFilter,
           {
             $set: {
@@ -214,11 +214,6 @@ export const deviceConfigRoutes: FastifyPluginAsync = async (fastify) => {
           },
           { new: true }
         );
-
-        if (!transitioned) {
-          const existing = await DeviceConfig.exists(identity);
-          if (!existing) return reply.status(200).send({ code: 1 });
-        }
 
         return reply.status(200).send({ code: 0 });
       } catch (error) {
