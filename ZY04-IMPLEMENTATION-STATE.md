@@ -4,6 +4,7 @@
 
 - Branch: `main`
 - Main dashboard merge commit: `2ef02af`
+- Same-origin dashboard serving commit: `4750fd5`
 - Phase 1 commit: `fa2e00d`
 - Phase 2 commit: `cc52296`
 - R2 storage phase commit: `dc813ba`
@@ -188,6 +189,8 @@ Firmware binary upload remains intentionally unimplemented; URL-based firmware a
 - `/` and non-API HTML routes fall back to the dashboard `index.html`; `/api/*`, `/sca/*`, `/ota/*`, `/health`, and `/uploads/*` never use the SPA fallback.
 - The legacy public upload-directory mount is removed. Recording and debug content remains available only through the existing controlled streaming/download APIs.
 - Serving the dashboard and admin APIs from one HTTPS origin makes the existing strict, secure admin session cookie suitable for the Render deployment.
+- Admin-auth startup diagnostics report only environment presence flags and normalized/string lengths. Failed-login diagnostics report only submitted/configured lengths and the email-match boolean.
+- Failed-login audit entries no longer retain the submitted email or use it as a target identifier; their metadata is limited to the same safe mismatch diagnostics.
 
 ## Phase 2 changed files
 
@@ -331,6 +334,15 @@ Backend and frontend production builds pass. Static and type checks confirm the 
 
 The Render-style backend build and standalone frontend build pass. A compiled backend started on an alternate local port returned dashboard HTML for `/` and a direct SPA route, returned healthy JSON from `/health`, rejected unauthenticated `/api/admin/auth/me` with HTTP 401, kept unknown API and `/uploads/*` requests out of the SPA fallback, and retained all seven supplier routes. No supplier contract, environment file, database record, or object-storage object was changed.
 
+## Admin login mismatch diagnostics changed files
+
+- `backend/src/services/adminAuthService.ts`
+- `backend/src/routes/adminAuth.ts`
+- `backend/src/server.ts`
+- `ZY04-IMPLEMENTATION-STATE.md`
+
+An isolated failure check confirms exactly five approved startup fields and five approved login-failure fields, with no raw email, password, or session-secret value in application or audit diagnostic payloads. Backend/frontend production builds pass; supplier APIs are unchanged.
+
 ## Known blockers and risks
 
 - LZ4 framing is unconfirmed. Complete compressed sessions stop at `PENDING_LZ4_CONFIRMATION`; originals are preserved and no decompression/decoding is attempted.
@@ -384,4 +396,4 @@ Deployment gate:
 
 ## Exact next phase
 
-After the same-origin serving commit reaches Render, verify `/`, login/session/logout, SPA refresh fallback, static assets, health, supplier endpoints, protected downloads, and R2 behavior on the live service. Supplier confirmation is still required for LZ4 framing and `opus-decoder-core` compatibility before enabling those recording paths.
+After the safe login diagnostics reach Render, make one failed login attempt and inspect `Admin login rejected`: email match plus submitted/configured lengths identify an env-input mismatch without revealing values. If all safe fields match but login remains rejected, the persisted `PRIMARY` admin identity/hash is stale and requires an explicitly authorized credential-rotation path. Supplier confirmation is still required for LZ4 framing and `opus-decoder-core` compatibility before enabling those recording paths.

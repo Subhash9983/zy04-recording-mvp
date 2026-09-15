@@ -4,7 +4,9 @@ import {
   AdminAuthConfigurationError,
   adminAuthService,
   InvalidAdminCredentialsError,
-  requireAdmin
+  requireAdmin,
+  safeAdminLoginFailureDiagnostics,
+  SafeAdminLoginFailureDiagnostics
 } from '../services/adminAuthService.js';
 import { writeAuditLog } from '../services/auditService.js';
 
@@ -50,10 +52,14 @@ const cookieBaseOptions = {
 
 export const adminAuthRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/api/admin/auth/login', { bodyLimit: 16 * 1024 }, async (request, reply) => {
-    let email: string | null = null;
+    let failureDiagnostics: SafeAdminLoginFailureDiagnostics | null = null;
     try {
       const credentials = validateLoginBody(request.body);
-      email = credentials.email;
+      failureDiagnostics = safeAdminLoginFailureDiagnostics(
+        credentials.email,
+        credentials.password,
+        adminAuthService.configuration
+      );
       const session = await adminAuthService.login(credentials.email, credentials.password);
 
       try {
@@ -85,13 +91,14 @@ export const adminAuthRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ code: 400, msg: error.message });
       }
       if (error instanceof InvalidAdminCredentialsError) {
+        if (failureDiagnostics) {
+          request.log.warn(failureDiagnostics, 'Admin login rejected');
+        }
         await writeAuditLog({
-          actor: { email },
           action: 'ADMIN_LOGIN_FAILED',
           targetType: 'ADMIN',
-          targetId: email,
-          metadata: { reason: 'invalid_credentials' },
-          context: requestContext(request)
+          targetId: null,
+          metadata: failureDiagnostics ? { ...failureDiagnostics } : {}
         });
         return reply.status(401).send({ code: 401, msg: 'Invalid email or password' });
       }

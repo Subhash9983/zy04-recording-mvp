@@ -28,6 +28,22 @@ export interface CreatedAdminSession extends AuthenticatedAdmin {
   cookieValue: string;
 }
 
+export interface SafeAdminAuthEnvironmentDiagnostics {
+  ADMIN_EMAIL_present: 'yes' | 'no';
+  ADMIN_EMAIL_normalized_length: number;
+  ADMIN_PASSWORD_present: 'yes' | 'no';
+  ADMIN_PASSWORD_length: number;
+  SESSION_SECRET_present: 'yes' | 'no';
+}
+
+export interface SafeAdminLoginFailureDiagnostics {
+  submitted_email_normalized_length: number;
+  configured_email_normalized_length: number;
+  email_matched: boolean;
+  submitted_password_length: number;
+  configured_password_length: number;
+}
+
 declare module 'fastify' {
   interface FastifyRequest {
     admin?: AuthenticatedAdmin;
@@ -54,6 +70,37 @@ export class InvalidAdminSessionError extends Error {
     super('Admin session is missing, invalid, or expired');
     this.name = 'InvalidAdminSessionError';
   }
+}
+
+export function safeAdminAuthEnvironmentDiagnostics(
+  env: AuthEnvironment
+): SafeAdminAuthEnvironmentDiagnostics {
+  const email = env.ADMIN_EMAIL?.trim().toLowerCase() || '';
+  const password = env.ADMIN_PASSWORD || '';
+  const sessionSecret = env.SESSION_SECRET || '';
+  return {
+    ADMIN_EMAIL_present: email ? 'yes' : 'no',
+    ADMIN_EMAIL_normalized_length: email.length,
+    ADMIN_PASSWORD_present: password.trim() ? 'yes' : 'no',
+    ADMIN_PASSWORD_length: password.length,
+    SESSION_SECRET_present: sessionSecret.trim() ? 'yes' : 'no'
+  };
+}
+
+export function safeAdminLoginFailureDiagnostics(
+  submittedEmail: string,
+  submittedPassword: string,
+  configuration: AdminAuthConfiguration
+): SafeAdminLoginFailureDiagnostics {
+  const normalizedEmail = submittedEmail.trim().toLowerCase();
+  const configuredEmail = configuration.enabled ? configuration.email : '';
+  return {
+    submitted_email_normalized_length: normalizedEmail.length,
+    configured_email_normalized_length: configuredEmail.length,
+    email_matched: configuration.enabled && normalizedEmail === configuredEmail,
+    submitted_password_length: submittedPassword.length,
+    configured_password_length: configuration.enabled ? configuration.initialPassword.length : 0
+  };
 }
 
 export function resolveAdminAuthConfiguration(env: AuthEnvironment): AdminAuthConfiguration {

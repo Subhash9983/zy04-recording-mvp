@@ -1,9 +1,14 @@
 import { buildApp } from './app.js';
 import { connectToDatabase, disconnectDatabase } from './db.js';
 import { config } from './config.js';
+import { safeAdminAuthEnvironmentDiagnostics } from './services/adminAuthService.js';
 
 async function start() {
   try {
+    console.info(
+      '[AdminAuth] Environment validation',
+      safeAdminAuthEnvironmentDiagnostics(process.env)
+    );
     console.log('[Server] Connecting to database...');
     await connectToDatabase();
 
