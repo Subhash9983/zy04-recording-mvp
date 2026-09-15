@@ -17,6 +17,17 @@ import { adminDashboardRoutes } from './routes/adminDashboard.js';
 import { installApiActivityTracking } from './services/apiActivityService.js';
 import { adminManagementRoutes } from './routes/adminManagement.js';
 
+const API_PREFIXES = ['/api/', '/sca/', '/ota/', '/uploads/'];
+
+function isFrontendRoute(method: string, rawUrl: string, accept?: string): boolean {
+  if (method !== 'GET') return false;
+  const pathname = rawUrl.split('?', 1)[0];
+  if (pathname === '/health' || API_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
+    return false;
+  }
+  return pathname === '/' || Boolean(accept?.includes('text/html'));
+}
+
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: true,
@@ -39,16 +50,6 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await app.register(cookie);
 
-  // Static files for uploads directory if needed
-  await app.register(fastifyStatic, {
-    root: path.resolve(config.uploadDir),
-    prefix: '/uploads/',
-    allowedPath: (pathName) => {
-      const normalized = pathName.replace(/\\/g, '/').toLowerCase();
-      return normalized !== '/debug-logs' && !normalized.startsWith('/debug-logs/');
-    }
-  });
-
   // Health check
   app.get('/health', async () => {
     return { status: 'ok', timestamp: new Date().toISOString() };
@@ -67,6 +68,27 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(adminManagementRoutes);
   await app.register(recordUploadRoutes);
   await app.register(recordingRoutes);
+
+  // The production dashboard is the only publicly served static content.
+  // Uploaded recordings and debug logs remain behind their API download routes.
+  const frontendDist = path.resolve(process.cwd(), '../frontend/dist');
+  await app.register(fastifyStatic, {
+    root: frontendDist,
+    prefix: '/',
+    wildcard: false,
+    index: ['index.html']
+  });
+
+  app.setNotFoundHandler((request, reply) => {
+    if (isFrontendRoute(request.method, request.raw.url || request.url, request.headers.accept)) {
+      return reply.type('text/html; charset=utf-8').sendFile('index.html');
+    }
+    return reply.status(404).send({
+      statusCode: 404,
+      error: 'Not Found',
+      message: 'Route not found'
+    });
+  });
 
   return app;
 }

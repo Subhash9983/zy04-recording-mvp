@@ -2,7 +2,8 @@
 
 ## Repository
 
-- Branch: `feature/zy04-device-management-admin-dashboard`
+- Branch: `main`
+- Main dashboard merge commit: `2ef02af`
 - Phase 1 commit: `fa2e00d`
 - Phase 2 commit: `cc52296`
 - R2 storage phase commit: `dc813ba`
@@ -95,7 +96,7 @@ Firmware binary upload remains intentionally unimplemented; URL-based firmware a
 - Admin management validation/creation service: `backend/src/services/adminManagementService.ts`
 - Authenticated and audited admin management routes: `backend/src/routes/adminManagement.ts`
 - Recording storage abstraction and R2 configuration: `backend/src/services/storageService.ts`
-- Route registration: `backend/src/app.ts`
+- Route registration, dashboard static serving, and guarded SPA fallback: `backend/src/app.ts`
 
 ## Model and indexes
 
@@ -183,6 +184,10 @@ Firmware binary upload remains intentionally unimplemented; URL-based firmware a
 - Global recordings are grouped by `device_sn + session_id` where possible, with isolated fallback rows for legacy records missing grouping fields.
 - Recording availability is exposed only as `original_available` and `wav_available` booleans; storage object keys and filesystem paths remain excluded.
 - The global view shows safe WAV/original downloads only when referenced storage is available and offers retry only for complete, failed, uncompressed sessions.
+- The backend production build installs/builds the sibling Vite project, and Fastify serves only `frontend/dist` as public static content.
+- `/` and non-API HTML routes fall back to the dashboard `index.html`; `/api/*`, `/sca/*`, `/ota/*`, `/health`, and `/uploads/*` never use the SPA fallback.
+- The legacy public upload-directory mount is removed. Recording and debug content remains available only through the existing controlled streaming/download APIs.
+- Serving the dashboard and admin APIs from one HTTPS origin makes the existing strict, secure admin session cookie suitable for the Render deployment.
 
 ## Phase 2 changed files
 
@@ -318,6 +323,14 @@ Isolated backend checks pass for authentication on all new routes, unchanged pub
 
 Backend and frontend production builds pass. Static and type checks confirm the authenticated global route, all-page loading, session grouping, orphan fallback, empty state, safe action eligibility, unchanged device-detail Recordings tab, and path-free availability fields. No database, object storage, deployment, or merge operation was performed.
 
+## Same-origin dashboard serving changed files
+
+- `backend/package.json`
+- `backend/src/app.ts`
+- `ZY04-IMPLEMENTATION-STATE.md`
+
+The Render-style backend build and standalone frontend build pass. A compiled backend started on an alternate local port returned dashboard HTML for `/` and a direct SPA route, returned healthy JSON from `/health`, rejected unauthenticated `/api/admin/auth/me` with HTTP 401, kept unknown API and `/uploads/*` requests out of the SPA fallback, and retained all seven supplier routes. No supplier contract, environment file, database record, or object-storage object was changed.
+
 ## Known blockers and risks
 
 - LZ4 framing is unconfirmed. Complete compressed sessions stop at `PENDING_LZ4_CONFIRMATION`; originals are preserved and no decompression/decoding is attempted.
@@ -327,7 +340,7 @@ Backend and frontend production builds pass. Static and type checks confirm the 
 - Firmware binary upload/storage is pending; firmware management intentionally remains URL-based.
 - Delivered configurations continue to be redelivered until a successful badge acknowledgement.
 - No `render.yaml`, deployment workflow, or other repository-owned Render branch configuration exists. Feature-branch deployment safety cannot be established from this repository, so no deployment was attempted.
-- The production admin session cookie is `SameSite=Strict`. Render must use a same-site frontend/backend topology (or one origin) before deployment; separate cross-site origins require an explicitly reviewed cookie policy change.
+- The production admin session cookie remains `SameSite=Strict`; the dashboard must continue to be served from this backend origin unless a future cross-site cookie policy is explicitly reviewed.
 - Actual Render environment values and service branch settings were not accessible during local verification and must be provisioned/confirmed without exposing their values.
 
 ## Phase 12 final verification (2026-09-14)
@@ -359,9 +372,9 @@ Backend service:
 
 Frontend service:
 
-- Set build-time `VITE_API_URL` to the exact deployed backend origin. `VITE_BACKEND_URL` controls the Vite development proxy only and does not configure the production bundle.
-- Suggested static-site commands with frontend as root: build `npm ci && npm run build`; publish `dist`.
-- Confirm the frontend/backend deployment topology is same-site for the current strict admin cookie before live login testing.
+- A separate frontend service is no longer required. Leave `VITE_API_URL` unset for same-origin requests (or set it to the exact same backend origin).
+- The backend build runs the frontend install/build from `../frontend`, and Fastify serves the resulting `frontend/dist` directory.
+- Keep `VITE_BACKEND_URL` limited to local Vite proxy development; it does not configure the production bundle.
 
 Deployment gate:
 
@@ -371,4 +384,4 @@ Deployment gate:
 
 ## Exact next phase
 
-Obtain explicit deployment or merge approval, confirm Render branch services and same-site admin-auth topology, provision the checklist values, and run non-production live smoke tests. Supplier confirmation is still required for LZ4 framing and `opus-decoder-core` compatibility before enabling those recording paths.
+After the same-origin serving commit reaches Render, verify `/`, login/session/logout, SPA refresh fallback, static assets, health, supplier endpoints, protected downloads, and R2 behavior on the live service. Supplier confirmation is still required for LZ4 framing and `opus-decoder-core` compatibility before enabling those recording paths.
