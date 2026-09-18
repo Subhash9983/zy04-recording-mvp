@@ -8,8 +8,8 @@ async function createTestApp() {
   const app = Fastify({ logger: false });
   installBufferedResponseFraming(app);
 
-  app.get('/success', async () => ({ code: 0, message: 'ready' }));
-  app.get('/error', async (_request, reply) => {
+  app.get('/sca/device/cloud_time', async () => ({ code: 0, message: 'ready' }));
+  app.get('/sca/device/config', async (_request, reply) => {
     return reply.status(400).send({ code: 400, message: 'invalid \u2713' });
   });
   app.get('/conflicting-header', async (_request, reply) => {
@@ -28,10 +28,11 @@ test('sets Content-Length on buffered success and JSON error responses', async (
   const app = await createTestApp();
   t.after(() => app.close());
 
-  for (const path of ['/success', '/error']) {
+  for (const path of ['/sca/device/cloud_time', '/sca/device/config']) {
     const response = await app.inject(path);
     assert.equal(response.headers['content-length'], String(Buffer.byteLength(response.body)));
     assert.equal(response.headers['transfer-encoding'], undefined);
+    assert.match(response.headers['cache-control'], /(?:^|,)\s*no-transform\s*(?:,|$)/i);
   }
 });
 
@@ -39,7 +40,7 @@ test('uses the UTF-8 byte length of the final serialized payload', async (t) => 
   const app = await createTestApp();
   t.after(() => app.close());
 
-  const response = await app.inject('/error');
+  const response = await app.inject('/sca/device/config');
   assert.notEqual(Buffer.byteLength(response.body), response.body.length);
   assert.equal(Number(response.headers['content-length']), Buffer.byteLength(response.body));
 });

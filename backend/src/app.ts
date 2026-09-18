@@ -18,6 +18,15 @@ import { installApiActivityTracking } from './services/apiActivityService.js';
 import { adminManagementRoutes } from './routes/adminManagement.js';
 
 const API_PREFIXES = ['/api/', '/sca/', '/ota/', '/uploads/'];
+const SUPPLIER_ROUTES = new Set([
+  '/sca/device/cloud_time',
+  '/sca/device/config',
+  '/sca/device/config_status',
+  '/sca/device/reportinfo',
+  '/sca/device/debug_log',
+  '/sca/recordupload',
+  '/ota/v1/fetch_new_firmware'
+]);
 
 function responsePayloadLength(payload: unknown): number | null {
   if (typeof payload === 'string') return Buffer.byteLength(payload);
@@ -28,7 +37,7 @@ function responsePayloadLength(payload: unknown): number | null {
 
 export function installBufferedResponseFraming(app: FastifyInstance): void {
   // Badge firmware requires explicit framing on buffered API responses.
-  app.addHook('onSend', async (_request, reply, payload) => {
+  app.addHook('onSend', async (request, reply, payload) => {
     if (reply.statusCode < 200 || reply.statusCode === 204 || reply.statusCode === 304) {
       return payload;
     }
@@ -39,6 +48,16 @@ export function installBufferedResponseFraming(app: FastifyInstance): void {
 
     reply.removeHeader('transfer-encoding');
     reply.header('Content-Length', contentLength);
+
+    // Cloudflare otherwise may transform the response and remove Content-Length.
+    const routeUrl = request.routeOptions.url;
+    if (routeUrl && SUPPLIER_ROUTES.has(routeUrl)) {
+      const currentCacheControl = reply.getHeader('cache-control');
+      const directives = typeof currentCacheControl === 'string' ? currentCacheControl : '';
+      if (!/(?:^|,)\s*no-transform\s*(?:,|$)/i.test(directives)) {
+        reply.header('Cache-Control', directives ? `${directives}, no-transform` : 'no-transform');
+      }
+    }
     return payload;
   });
 }
