@@ -19,6 +19,30 @@ import { adminManagementRoutes } from './routes/adminManagement.js';
 
 const API_PREFIXES = ['/api/', '/sca/', '/ota/', '/uploads/'];
 
+function responsePayloadLength(payload: unknown): number | null {
+  if (typeof payload === 'string') return Buffer.byteLength(payload);
+  if (Buffer.isBuffer(payload)) return payload.length;
+  if (payload instanceof Uint8Array) return payload.byteLength;
+  return null;
+}
+
+export function installBufferedResponseFraming(app: FastifyInstance): void {
+  // Badge firmware requires explicit framing on buffered API responses.
+  app.addHook('onSend', async (_request, reply, payload) => {
+    if (reply.statusCode < 200 || reply.statusCode === 204 || reply.statusCode === 304) {
+      return payload;
+    }
+
+    // Streams (including SSE and downloads) must retain their own framing.
+    const contentLength = responsePayloadLength(payload);
+    if (contentLength === null) return payload;
+
+    reply.removeHeader('transfer-encoding');
+    reply.header('Content-Length', contentLength);
+    return payload;
+  });
+}
+
 function isFrontendRoute(method: string, rawUrl: string, accept?: string): boolean {
   if (method !== 'GET') return false;
   const pathname = rawUrl.split('?', 1)[0];
@@ -33,6 +57,8 @@ export async function buildApp(): Promise<FastifyInstance> {
     logger: true,
     bodyLimit: 50 * 1024 * 1024 // 50MB
   });
+
+  installBufferedResponseFraming(app);
 
   // CORS setup
   await app.register(cors, {
