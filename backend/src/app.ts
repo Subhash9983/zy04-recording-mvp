@@ -34,6 +34,19 @@ export async function buildApp(): Promise<FastifyInstance> {
     bodyLimit: 50 * 1024 * 1024 // 50MB
   });
 
+  // Badge firmware requires explicit framing on buffered API responses.
+  app.addHook('onSend', async (_request, reply, payload) => {
+    if (reply.statusCode < 200 || reply.statusCode === 204 || reply.statusCode === 304) {
+      return payload;
+    }
+    // Streams (including SSE and downloads) must retain their own framing.
+    if (typeof payload === 'string' || Buffer.isBuffer(payload)) {
+      reply.removeHeader('transfer-encoding');
+      reply.header('content-length', Buffer.byteLength(payload));
+    }
+    return payload;
+  });
+
   // CORS setup
   await app.register(cors, {
     origin: config.frontendUrl,
